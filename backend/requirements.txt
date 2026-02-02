@@ -1,0 +1,58 @@
+# =============================================================================
+# JANMITRA BACKEND - PYTHON DEPENDENCIES
+# Production-grade requirements for Django REST API
+# =============================================================================
+
+# Django Framework
+Django>=4.2,<5.0
+
+# Django REST Framework
+djangorestframework>=3.14,<4.0
+django-filter>=23.5
+
+# JWT Authentication
+djangorestframework-simplejwt>=5.3,<6.0
+
+# Database
+psycopg2-binary>=2.9,<3.0  # PostgreSQL adapter
+
+# Environment Configuration
+python-decouple>=3.8
+
+# WSGI Server
+gunicorn>=21.0,<23.0
+
+# Celery Task Queue
+celery>=5.3,<6.0
+redis>=5.0,<6.0
+
+# CORS Headers (for mobile app)
+django-cors-headers>=4.3,<5.0
+
+# Encryption
+cryptography>=41.0,<43.0
+pycryptodome>=3.19,<4.0
+
+# Image Processing (for media handling)
+Pillow>=10.0,<11.0
+
+# File Type Detection
+python-magic>=0.4.27
+
+# UUID handling
+uuid>=1.30
+
+# HTTP Requests (for external APIs)
+requests>=2.31,<3.0
+
+# Timezone support
+pytz>=2024.1
+
+# Password hashing
+argon2-cffi>=23.1
+
+# Whitenoise for static files (optional, nginx handles this)
+whitenoise>=6.6,<7.0
+
+# Health checks
+django-health-check>=3.17,<4.0

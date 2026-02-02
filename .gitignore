@@ -1,0 +1,134 @@
+# =============================================================================
+# JANMITRA - GIT IGNORE
+# =============================================================================
+
+# =============================================================================
+# ENVIRONMENT & SECRETS
+# =============================================================================
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.crt
+secrets/
+
+# =============================================================================
+# PYTHON
+# =============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+.venv/
+ENV/
+env/
+.env/
+
+# =============================================================================
+# DJANGO
+# =============================================================================
+*.log
+*.pot
+*.pyc
+db.sqlite3
+*.sqlite3
+*.db
+staticfiles/
+encrypted_media/
+media/
+logs/
+
+# =============================================================================
+# IDE & EDITORS
+# =============================================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# =============================================================================
+# FLUTTER / DART
+# =============================================================================
+mobile/.dart_tool/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/.packages
+mobile/build/
+mobile/*.iml
+mobile/.metadata
+mobile/pubspec.lock
+mobile/ios/Pods/
+mobile/ios/.symlinks/
+mobile/android/.gradle/
+mobile/android/local.properties
+mobile/android/app/debug/
+mobile/android/app/profile/
+mobile/android/app/release/
+
+# =============================================================================
+# DOCKER
+# =============================================================================
+*.log
+docker-compose.override.yml
+
+# =============================================================================
+# OS GENERATED
+# =============================================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# =============================================================================
+# TESTING & COVERAGE
+# =============================================================================
+.coverage
+htmlcov/
+.tox/
+.nox/
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# =============================================================================
+# MISC
+# =============================================================================
+*.bak
+*.tmp
+*.temp
+*.orig
