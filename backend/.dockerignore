@@ -1,0 +1,79 @@
+# =============================================================================
+# DOCKER IGNORE - BACKEND
+# =============================================================================
+# Reduce build context size and prevent sensitive files from entering image
+# =============================================================================
+
+# Git
+.git
+.gitignore
+
+# Environment files
+.env
+.env.*
+*.env
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+ENV/
+env/
+
+# Virtual environments
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+tests/
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Development databases
+*.sqlite3
+*.db
+db.sqlite3
+
+# Logs
+logs/
+*.log
+
+# Local media (will be mounted as volume)
+encrypted_media/
+media/
+
+# Static files (collected during build)
+staticfiles/
+
+# Misc
+*.bak
+*.tmp
+*.temp
+Dockerfile
+docker-compose*.yml
+
+# Flutter (if in same repo)
+mobile/
+janmitra_mobile/
+
+# Scripts not needed in container
+scripts/
+*.sh
+!entrypoint.sh
