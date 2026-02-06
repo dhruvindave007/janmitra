@@ -1172,7 +1172,7 @@ class IncidentMediaListView(views.APIView):
             is_deleted=False
         ).order_by('created_at')
         
-        serializer = IncidentMediaSerializer(media_files, many=True)
+        serializer = IncidentMediaSerializer(media_files, many=True, context={'request': request})
         return Response(serializer.data)
 
 
