@@ -434,13 +434,16 @@ class DeviceBoundTokenRefreshSerializer(TokenRefreshSerializer):
     )
     
     def validate(self, attrs):
-        # Standard token validation
-        data = super().validate(attrs)
+        # CRITICAL: Extract payload BEFORE super().validate() blacklists the token
+        # super().validate() rotates the token (blacklists old, creates new)
+        # so we must read the payload from the old token first.
+        from rest_framework_simplejwt.tokens import RefreshToken
+        old_token = RefreshToken(attrs['refresh'])
+        user_id = old_token.payload.get('user_id')
+        session_id = old_token.payload.get('session_id')
         
-        # Get user from token
-        refresh = self.token_class(attrs['refresh'])
-        user_id = refresh.payload.get('user_id')
-        session_id = refresh.payload.get('session_id')
+        # Now perform standard token validation (this blacklists the old token)
+        data = super().validate(attrs)
         
         if session_id:
             # Validate session is still active
