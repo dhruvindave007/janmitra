@@ -393,7 +393,8 @@ CORS_ALLOW_HEADERS = [
     'user-agent',
     'x-csrftoken',
     'x-requested-with',
-    'x-device-id',  # Custom header for device binding
+    'x-device-id',           # Legacy device binding header
+    'x-device-fingerprint',  # Primary device binding header (Flutter sends this)
 ]
 
 # Allowed methods
@@ -439,3 +440,18 @@ FILE_UPLOAD_HANDLERS = [
     'django.core.files.uploadhandler.MemoryFileUploadHandler',
     'django.core.files.uploadhandler.TemporaryFileUploadHandler',
 ]
+
+# =============================================================================
+# STARTUP LOGGING (Print config on boot for debugging)
+# =============================================================================
+import logging as _logging
+_startup_logger = _logging.getLogger('janmitra.startup')
+_startup_logger.info('=' * 60)
+_startup_logger.info('JANMITRA BACKEND STARTUP CONFIG')
+_startup_logger.info(f'  DEBUG              = {DEBUG}')
+_startup_logger.info(f'  ALLOWED_HOSTS      = {ALLOWED_HOSTS}')
+_startup_logger.info(f'  CORS_ALLOW_ALL     = {CORS_ALLOW_ALL_ORIGINS}')
+_startup_logger.info(f'  CORS_ORIGINS       = {CORS_ALLOWED_ORIGINS}')
+_startup_logger.info(f'  CORS_HEADERS       = {CORS_ALLOW_HEADERS}')
+_startup_logger.info(f'  CSRF_TRUSTED       = {CSRF_TRUSTED_ORIGINS}')
+_startup_logger.info('=' * 60)
