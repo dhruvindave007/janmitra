@@ -807,10 +807,15 @@ class IncidentMediaSerializer(serializers.ModelSerializer):
     
     NOTE: File URL is NOT included to prevent public access.
     Use the dedicated download endpoint instead.
+    Includes can_download, preview_url, download_url so Flutter knows
+    which endpoint to use based on role.
     """
     
     media_type_display = serializers.CharField(source='get_media_type_display', read_only=True)
     uploaded_by_name = serializers.SerializerMethodField()
+    can_download = serializers.SerializerMethodField()
+    preview_url = serializers.SerializerMethodField()
+    download_url = serializers.SerializerMethodField()
     
     class Meta:
         model = IncidentMedia
@@ -824,6 +829,9 @@ class IncidentMediaSerializer(serializers.ModelSerializer):
             'content_type',
             'uploaded_by',
             'uploaded_by_name',
+            'can_download',
+            'preview_url',
+            'download_url',
             'created_at',
         ]
         read_only_fields = ['id', 'incident', 'uploaded_by', 'created_at']
@@ -831,6 +839,31 @@ class IncidentMediaSerializer(serializers.ModelSerializer):
     def get_uploaded_by_name(self, obj):
         if obj.uploaded_by:
             return obj.uploaded_by.identifier
+        return None
+
+    def get_can_download(self, obj):
+        """Check if current user's role allows full media download."""
+        from authentication.models import UserRole
+        request = self.context.get('request')
+        if not request or not request.user or not request.user.is_authenticated:
+            return False
+        user = request.user
+        # Level-2 officers (not captains) cannot download
+        if user.role == UserRole.LEVEL_2:
+            return False
+        # JanMitra cannot download
+        if getattr(user, 'is_janmitra', False):
+            return False
+        return True
+
+    def get_preview_url(self, obj):
+        """Return the preview endpoint URL."""
+        return f'/api/v1/incidents/media/{obj.id}/preview/'
+
+    def get_download_url(self, obj):
+        """Return the download endpoint URL (or null if not allowed)."""
+        if self.get_can_download(obj):
+            return f'/api/v1/incidents/media/{obj.id}/download/'
         return None
 
 
