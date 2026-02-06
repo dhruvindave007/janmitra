@@ -370,7 +370,7 @@ LOGGING = {
 # =============================================================================
 
 # Allow all origins in development/demo, restrict in production
-CORS_ALLOW_ALL_ORIGINS = config('CORS_ALLOW_ALL_ORIGINS', default=True, cast=bool)
+CORS_ALLOW_ALL_ORIGINS = config('CORS_ALLOW_ALL_ORIGINS', default=False, cast=bool)
 
 # Or specify allowed origins
 CORS_ALLOWED_ORIGINS = config(
