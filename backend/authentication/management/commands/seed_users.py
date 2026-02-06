@@ -73,8 +73,9 @@ class Command(BaseCommand):
         updated_count = 0
 
         for user_data in DEMO_USERS:
-            identifier = user_data['identifier']
+            identifier = user_data.pop('identifier')
             password = user_data.pop('password')
+            role = user_data.pop('role')
             is_superuser = user_data.pop('is_superuser', False)
             is_staff = user_data.pop('is_staff', False)
 
@@ -82,7 +83,7 @@ class Command(BaseCommand):
                 user = User.objects.get(identifier=identifier)
                 if force:
                     user.set_password(password)
-                    user.role = user_data['role']
+                    user.role = role
                     user.status = UserStatus.ACTIVE
                     user.is_active = True
                     user.is_superuser = is_superuser
@@ -90,7 +91,7 @@ class Command(BaseCommand):
                     user.save()
                     updated_count += 1
                     self.stdout.write(self.style.WARNING(
-                        f'  Updated: {identifier} ({user_data["role"]})'
+                        f'  Updated: {identifier} ({role})'
                     ))
                 else:
                     self.stdout.write(self.style.NOTICE(
@@ -100,6 +101,7 @@ class Command(BaseCommand):
                 user = User.objects.create_user(
                     identifier=identifier,
                     password=password,
+                    role=role,
                     **user_data,
                 )
                 user.status = UserStatus.ACTIVE
@@ -109,7 +111,7 @@ class Command(BaseCommand):
                 user.save()
                 created_count += 1
                 self.stdout.write(self.style.SUCCESS(
-                    f'  Created: {identifier} ({user_data["role"]})'
+                    f'  Created: {identifier} ({role})'
                 ))
 
         self.stdout.write('')
