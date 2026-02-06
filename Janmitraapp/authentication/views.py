@@ -318,11 +318,19 @@ class TokenRefreshView(views.APIView):
     serializer_class = DeviceBoundTokenRefreshSerializer
     
     def post(self, request):
+        from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
+        
         serializer = self.serializer_class(
             data=request.data,
             context={'request': request}
         )
-        serializer.is_valid(raise_exception=True)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except TokenError as e:
+            return Response(
+                {'detail': str(e), 'code': 'token_not_valid'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
         return Response(serializer.validated_data, status=status.HTTP_200_OK)
 
 

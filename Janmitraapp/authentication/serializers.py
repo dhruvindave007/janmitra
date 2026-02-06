@@ -434,13 +434,18 @@ class DeviceBoundTokenRefreshSerializer(TokenRefreshSerializer):
     )
     
     def validate(self, attrs):
-        # Standard token validation
-        data = super().validate(attrs)
+        # Get user/session info from the token BEFORE rotation blacklists it
+        try:
+            refresh = self.token_class(attrs['refresh'])
+            user_id = refresh.payload.get('user_id')
+            session_id = refresh.payload.get('session_id')
+        except Exception:
+            # Let parent handle invalid token
+            user_id = None
+            session_id = None
         
-        # Get user from token
-        refresh = self.token_class(attrs['refresh'])
-        user_id = refresh.payload.get('user_id')
-        session_id = refresh.payload.get('session_id')
+        # Standard token validation (this rotates/blacklists the old token)
+        data = super().validate(attrs)
         
         if session_id:
             # Validate session is still active
