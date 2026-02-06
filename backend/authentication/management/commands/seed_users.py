@@ -78,6 +78,9 @@ class Command(BaseCommand):
             role = user_data.pop('role')
             is_superuser = user_data.pop('is_superuser', False)
             is_staff = user_data.pop('is_staff', False)
+            # Remove fields that don't exist on User model
+            user_data.pop('full_name', None)
+            user_data.pop('email', None)
 
             try:
                 user = User.objects.get(identifier=identifier)
