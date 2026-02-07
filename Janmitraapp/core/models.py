@@ -100,6 +100,60 @@ class BaseModel(models.Model):
         self.is_deleted = False
         self.deleted_at = None
         self.save(update_fields=['is_deleted', 'deleted_at', 'updated_at'])
+
+
+class AppVersion(BaseModel):
+    """
+    Manages app version information and APK distribution.
+    
+    The Flutter app checks this endpoint to determine:
+    - Whether a new version is available
+    - The minimum supported version (forces update if older)
+    - Where to download the APK from
+    
+    APKs are stored in media/app_updates/ and served via Django MEDIA.
+    Only one version should be set as is_active=True at a time.
+    """
+    
+    latest_version = models.CharField(
+        max_length=20,
+        help_text="Latest version string (e.g., '1.2.3')"
+    )
+    
+    minimum_supported_version = models.CharField(
+        max_length=20,
+        help_text="Minimum version required to use the app. App will force update if older."
+    )
+    
+    apk_file = models.FileField(
+        upload_to='app_updates/',
+        help_text="APK file for download",
+        null=True,
+        blank=True,
+    )
+    
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Only the active version is returned by the API"
+    )
+    
+    class Meta:
+        db_table = 'app_versions'
+        verbose_name = 'App Version'
+        verbose_name_plural = 'App Versions'
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        status = '(active)' if self.is_active else '(inactive)'
+        return f"App v{self.latest_version} {status}"
+    
+    @classmethod
+    def get_active_version(cls):
+        """
+        Get the currently active app version.
+        Returns None if no active version exists.
+        """
+        return cls.objects.filter(is_active=True, is_deleted=False).first()
     
     def hard_delete(self):
         """

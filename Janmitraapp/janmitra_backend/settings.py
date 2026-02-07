@@ -170,12 +170,12 @@ STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 # =============================================================================
-# MEDIA FILES (Encrypted storage)
+# MEDIA FILES
 # =============================================================================
 
 # Use a leading slash for media URL so dev static serving works at '/media/'
 MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'encrypted_media'
+MEDIA_ROOT = BASE_DIR / 'media'
 # Ensure media directory exists during development
 try:
     MEDIA_ROOT.mkdir(parents=True, exist_ok=True)

@@ -46,6 +46,7 @@ from authentication.permissions import (
 )
 from audit.models import AuditLog, AuditEventType
 from notifications.services import NotificationService
+from .services import LocationResolverService
 
 
 class ReportCreateView(views.APIView):
@@ -631,6 +632,22 @@ class IncidentBroadcastView(views.APIView):
             NotificationService.notify_new_case(case)
         except Exception:
             pass  # Non-critical - don't fail the request
+        
+        # Resolve area name from GPS coordinates asynchronously (outside transaction - non-critical)
+        # This enriches incident with geographic metadata for better case routing
+        if incident.latitude and incident.longitude and not incident.area_name:
+            try:
+                resolved_area = LocationResolverService.resolve_area_name(
+                    incident.latitude,
+                    incident.longitude
+                )
+                if resolved_area:
+                    incident.area_name = resolved_area
+                    incident.save(update_fields=['area_name'])
+                    logger.info(f"[IncidentBroadcast] Area resolved for incident {incident.id}: {resolved_area}")
+            except Exception as e:
+                logger.warning(f"[IncidentBroadcast] Location resolution failed: {e}")
+                pass  # Non-critical - don't fail the request
         
         # Audit log (outside transaction - non-critical)
         AuditLog.log(

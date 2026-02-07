@@ -97,6 +97,9 @@ class CaseListSerializer(serializers.ModelSerializer):
     has_location = serializers.BooleanField(source='incident.has_location', read_only=True)
     latitude = serializers.DecimalField(source='incident.latitude', max_digits=10, decimal_places=7, read_only=True)
     longitude = serializers.DecimalField(source='incident.longitude', max_digits=10, decimal_places=7, read_only=True)
+    area_name = serializers.CharField(source='incident.area_name', read_only=True, allow_null=True)
+    city = serializers.CharField(source='incident.city', read_only=True, allow_null=True)
+    state = serializers.CharField(source='incident.state', read_only=True, allow_null=True)
     
     # Media indicators for case list
     has_media = serializers.SerializerMethodField()
@@ -121,6 +124,9 @@ class CaseListSerializer(serializers.ModelSerializer):
             'has_location',
             'latitude',
             'longitude',
+            'area_name',
+            'city',
+            'state',
             'has_media',
             'media_count',
             'created_at',
@@ -168,6 +174,9 @@ class CaseDetailSerializer(serializers.ModelSerializer):
     has_location = serializers.BooleanField(source='incident.has_location', read_only=True)
     latitude = serializers.DecimalField(source='incident.latitude', max_digits=10, decimal_places=7, read_only=True)
     longitude = serializers.DecimalField(source='incident.longitude', max_digits=10, decimal_places=7, read_only=True)
+    area_name = serializers.CharField(source='incident.area_name', read_only=True, allow_null=True)
+    city = serializers.CharField(source='incident.city', read_only=True, allow_null=True)
+    state = serializers.CharField(source='incident.state', read_only=True, allow_null=True)
     
     # Nested objects for detailed views
     incident = IncidentSerializer(read_only=True)
@@ -202,6 +211,9 @@ class CaseDetailSerializer(serializers.ModelSerializer):
             'has_location',
             'latitude',
             'longitude',
+            'area_name',
+            'city',
+            'state',
             # Nested incident object (complete data)
             'incident',
             # Case status
