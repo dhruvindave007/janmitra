@@ -233,9 +233,9 @@ REST_FRAMEWORK = {
 # =============================================================================
 
 SIMPLE_JWT = {
-    # Increased for demo stability (long uploads can expire short-lived tokens)
-    'ACCESS_TOKEN_LIFETIME': timedelta(hours=2),  # 2 hours
-
+    'ACCESS_TOKEN_LIFETIME': timedelta(
+        minutes=config('JWT_ACCESS_TOKEN_LIFETIME_MINUTES', default=120, cast=int)
+    ),
     'REFRESH_TOKEN_LIFETIME': timedelta(
         days=config('JWT_REFRESH_TOKEN_LIFETIME_DAYS', default=7, cast=int)
     ),
@@ -454,4 +454,5 @@ _startup_logger.info(f'  CORS_ALLOW_ALL     = {CORS_ALLOW_ALL_ORIGINS}')
 _startup_logger.info(f'  CORS_ORIGINS       = {CORS_ALLOWED_ORIGINS}')
 _startup_logger.info(f'  CORS_HEADERS       = {CORS_ALLOW_HEADERS}')
 _startup_logger.info(f'  CSRF_TRUSTED       = {CSRF_TRUSTED_ORIGINS}')
+_startup_logger.info(f'  ACCESS TOKEN LIFETIME: {SIMPLE_JWT["ACCESS_TOKEN_LIFETIME"]}')
 _startup_logger.info('=' * 60)
