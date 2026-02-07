@@ -7,6 +7,7 @@ API Structure:
 - /api/v1/media/    - Media management
 - /api/v1/escalation/ - Escalation workflows
 - /api/v1/audit/    - Audit logs (Level 1 only)
+- /api/v1/app/      - App configuration & updates
 - /admin/           - Django admin (restricted)
 """
 
@@ -36,6 +37,7 @@ def api_root(request):
             'media': '/api/v1/media/',
             'escalation': '/api/v1/escalation/',
             'audit': '/api/v1/audit/',
+            'app': '/api/v1/app/',
         }
     })
 
@@ -69,6 +71,9 @@ urlpatterns = [
     
     # Notification endpoints
     path('api/v1/notifications/', include('notifications.urls', namespace='notifications')),
+    
+    # App configuration & update endpoints (version, APK download)
+    path('api/v1/app/', include('core.urls', namespace='app')),
     
     # Django admin (restricted access)
     path('admin/', admin.site.urls),
