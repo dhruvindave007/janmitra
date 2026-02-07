@@ -233,9 +233,9 @@ REST_FRAMEWORK = {
 # =============================================================================
 
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(
-        minutes=config('JWT_ACCESS_TOKEN_LIFETIME_MINUTES', default=15, cast=int)
-    ),
+    # Increased for demo stability (long uploads can expire short-lived tokens)
+    'ACCESS_TOKEN_LIFETIME': timedelta(hours=2),  # 2 hours
+
     'REFRESH_TOKEN_LIFETIME': timedelta(
         days=config('JWT_REFRESH_TOKEN_LIFETIME_DAYS', default=7, cast=int)
     ),
