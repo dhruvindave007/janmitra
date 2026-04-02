@@ -1,5 +1,48 @@
 def visible_cases_for_user(user):
-    qs = Case.objects.filter(is_deleted=False)
+    """
+    Get cases visible to a user based on their role.
+    
+    Visibility rules (new workflow):
+    - L0: Only cases assigned to them
+    - L1/L2: All cases at their police station
+    - L3: Cases escalated to L3 or L4 level
+    - L4: Cases at L4 level
+    - JANMITRA: No access to case list
+    
+    Legacy roles fall back to numeric level matching.
+    """
+    from authentication.models import UserRole
+    
+    qs = Case.objects.filter(is_deleted=False).select_related(
+        'incident', 'incident__submitted_by', 'police_station', 'assigned_officer'
+    )
+    
+    role = getattr(user, 'role', None)
+    
+    # New workflow roles
+    if role == UserRole.L0:
+        # L0 sees only cases assigned to them
+        return qs.filter(assigned_officer=user)
+    
+    if role in [UserRole.L1, UserRole.L2]:
+        # L1/L2 see all cases at their station
+        station = getattr(user, 'police_station', None)
+        if station:
+            return qs.filter(police_station=station)
+        return Case.objects.none()
+    
+    if role == UserRole.L3:
+        # L3 sees cases escalated to L3 or L4
+        return qs.filter(current_level__in=['L3', 'L4'])
+    
+    if role == UserRole.L4:
+        # L4 sees cases at L4 level
+        return qs.filter(current_level='L4')
+    
+    if role == UserRole.JANMITRA:
+        return Case.objects.none()
+    
+    # Legacy role handling (backward compatibility)
     if getattr(user, 'is_level_2', False) and not getattr(user, 'is_level_2_captain', False):
         return qs.filter(current_level=2)
     if getattr(user, 'is_level_2_captain', False):
@@ -8,7 +51,10 @@ def visible_cases_for_user(user):
         return qs.filter(current_level=1)
     if getattr(user, 'is_level_0', False):
         return qs.filter(current_level=0)
+    
     return Case.objects.none()
+
+
 """
 Report models for JanMitra Backend.
 
@@ -567,30 +613,67 @@ class IncidentCategory:
 
 class CaseStatus:
     """Case lifecycle status constants."""
-    OPEN = 'open'
+    NEW = 'new'
+    ASSIGNED = 'assigned'
+    IN_PROGRESS = 'in_progress'
+    ESCALATED = 'escalated'
+    RESOLVED = 'resolved'
+    OPEN = 'open'  # Legacy
     SOLVED = 'solved'
     REJECTED = 'rejected'
     CLOSED = 'closed'
     
     CHOICES = [
+        (NEW, 'New'),
+        (ASSIGNED, 'Assigned'),
+        (IN_PROGRESS, 'In Progress'),
+        (ESCALATED, 'Escalated'),
+        (RESOLVED, 'Resolved'),
         (OPEN, 'Open'),
         (SOLVED, 'Solved'),
         (REJECTED, 'Rejected'),
         (CLOSED, 'Closed'),
     ]
+    
+    # Terminal states
+    TERMINAL_STATES = [RESOLVED, CLOSED, REJECTED]
 
 
 class CaseLevel:
-    """Case handling levels."""
+    """
+    Case handling levels (New Workflow).
+    
+    Levels flow: L0/L1/L2 (station) → L3 (higher) → L4 (top)
+    """
+    L0 = 'L0'   # Field Officer (assigned by L1)
+    L1 = 'L1'   # PSO
+    L2 = 'L2'   # PI
+    L3 = 'L3'   # Higher Authority (first escalation)
+    L4 = 'L4'   # Top Authority (final escalation, no SLA)
+    
+    # Legacy levels for backward compatibility
     LEVEL_2 = 2  # Field Officers
     LEVEL_1 = 1  # Senior Officers
     LEVEL_0 = 0  # Highest Authority
     
     CHOICES = [
-        (LEVEL_2, 'Level 2 - Field Officers'),
-        (LEVEL_1, 'Level 1 - Senior Officers'),
-        (LEVEL_0, 'Level 0 - Highest Authority'),
+        # New workflow levels
+        (L0, 'L0 - Field Officer'),
+        (L1, 'L1 - PSO'),
+        (L2, 'L2 - PI'),
+        (L3, 'L3 - Higher Authority'),
+        (L4, 'L4 - Top Authority'),
+        # Legacy choices (kept for backward compatibility)
+        (LEVEL_2, 'Level 2 - Field Officers (Legacy)'),
+        (LEVEL_1, 'Level 1 - Senior Officers (Legacy)'),
+        (LEVEL_0, 'Level 0 - Highest Authority (Legacy)'),
     ]
+    
+    # Station-level (subject to 48h SLA, escalates to L3)
+    STATION_LEVELS = [L0, L1, L2]
+    
+    # Escalation levels (L3 has SLA, L4 does not)
+    ESCALATION_LEVELS = [L3, L4]
 
 
 class Incident(BaseModel):
@@ -828,8 +911,13 @@ class Case(BaseModel):
     """
     Managed case lifecycle with SLA tracking.
     
+    New workflow:
+    - Case routed to PoliceStation based on nearest GPS
+    - L1 assigns L0 officer
+    - L0 works case, L2 closes
+    - 48h SLA → auto-escalate to L3 → L4
+    
     A Case is created automatically when an Incident is submitted.
-    Tracks the handling process through levels 2 -> 1 -> 0.
     """
     
     # Link to source incident
@@ -840,27 +928,86 @@ class Case(BaseModel):
         help_text="Source incident for this case"
     )
     
-    # Current handling level
-    current_level = models.IntegerField(
-        choices=CaseLevel.CHOICES,
-        default=CaseLevel.LEVEL_2,
+    # Assigned police station (new workflow)
+    police_station = models.ForeignKey(
+        'core.PoliceStation',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='cases',
+        help_text="Police station this case is routed to"
+    )
+    
+    # Current handling level (new workflow uses string levels)
+    current_level = models.CharField(
+        max_length=10,
+        choices=[
+            ('L0', 'L0 - Field Officer'),
+            ('L1', 'L1 - PSO'),
+            ('L2', 'L2 - PI'),
+            ('L3', 'L3 - Higher Authority'),
+            ('L4', 'L4 - Top Authority'),
+        ],
+        default='L1',
         db_index=True,
-        help_text="Current handling level (2=Field, 1=Senior, 0=Highest)"
+        help_text="Current handling level (L0/L1/L2/L3/L4)"
     )
     
     # Status
     status = models.CharField(
         max_length=20,
-        choices=CaseStatus.CHOICES,
-        default=CaseStatus.OPEN,
+        choices=[
+            ('new', 'New'),
+            ('assigned', 'Assigned'),
+            ('in_progress', 'In Progress'),
+            ('escalated', 'Escalated'),
+            ('resolved', 'Resolved'),
+            ('open', 'Open'),
+            ('solved', 'Solved'),
+            ('rejected', 'Rejected'),
+            ('closed', 'Closed'),
+        ],
+        default='new',
         db_index=True,
         help_text="Current case status"
+    )
+    
+    # Officer assignment (L1 assigns L0)
+    assigned_officer = models.ForeignKey(
+        'authentication.User',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='assigned_cases',
+        help_text="L0 officer assigned to this case"
+    )
+    
+    assigned_by = models.ForeignKey(
+        'authentication.User',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='case_assignments_made',
+        help_text="L1 who assigned the officer"
+    )
+    
+    assigned_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When officer was assigned"
     )
     
     # SLA tracking
     sla_deadline = models.DateTimeField(
         db_index=True,
-        help_text="Deadline for current level to resolve before auto-escalation"
+        help_text="Deadline for resolution before auto-escalation (48h)"
+    )
+    
+    sla_breached_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="When SLA was breached (null if not breached)"
     )
     
     # Resolution tracking
@@ -873,6 +1020,22 @@ class Case(BaseModel):
         related_name='cases_solved'
     )
     solution_notes = models.TextField(blank=True)
+    
+    # Closure tracking (L2 closes cases solved by L0)
+    closed_at = models.DateTimeField(null=True, blank=True)
+    closed_by = models.ForeignKey(
+        'authentication.User',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='cases_closed'
+    )
+    closed_by_level = models.CharField(
+        max_length=10,
+        blank=True,
+        null=True,
+        help_text="Level of the user who closed the case"
+    )
     
     # Rejection tracking
     rejected_at = models.DateTimeField(null=True, blank=True)
@@ -889,6 +1052,12 @@ class Case(BaseModel):
     escalation_count = models.PositiveSmallIntegerField(default=0)
     last_escalated_at = models.DateTimeField(null=True, blank=True)
     
+    # Investigation chat lock
+    is_chat_locked = models.BooleanField(
+        default=False,
+        help_text="Whether investigation chat is locked (after case closure)"
+    )
+    
     class Meta:
         db_table = 'cases'
         verbose_name = 'Case'
@@ -898,10 +1067,46 @@ class Case(BaseModel):
             models.Index(fields=['status', 'current_level'], name='cases_status_9a5d6f_idx'),
             models.Index(fields=['sla_deadline'], name='cases_sla_dea_cee997_idx'),
             models.Index(fields=['current_level', 'status', 'sla_deadline'], name='cases_current_bc36d3_idx'),
+            models.Index(fields=['police_station', 'status'], name='case_station_status_idx'),
+            models.Index(fields=['police_station', 'current_level', 'status'], name='case_station_level_idx'),
+            models.Index(fields=['assigned_officer', 'status'], name='case_officer_status_idx'),
+            models.Index(fields=['sla_breached_at'], name='case_sla_breach_idx'),
         ]
+    
+    # Level ordering for monotonic enforcement
+    # L0/L1/L2 are station levels (can transition between them)
+    # L3/L4 are escalated levels (once reached, cannot decrease)
+    LEVEL_ORDER = {'L0': 0, 'L1': 1, 'L2': 2, 'L3': 3, 'L4': 4}
+    ESCALATED_LEVELS = {'L3', 'L4'}
     
     def __str__(self):
         return f"Case {self.id} - {self.status}"
+    
+    def save(self, *args, **kwargs):
+        """
+        Override save to enforce monotonic level for escalated cases.
+        Once a case reaches L3 or L4, the level cannot decrease.
+        Station levels (L0/L1/L2) can transition freely before escalation.
+        """
+        if not self._state.adding:
+            # Get the current level from database
+            try:
+                old_case = Case.objects.get(pk=self.pk)
+                old_level_str = old_case.current_level
+                new_level_str = self.current_level
+                
+                # If case was at L3 or L4, enforce monotonic increase
+                if old_level_str in self.ESCALATED_LEVELS:
+                    old_level = self.LEVEL_ORDER.get(old_level_str, 0)
+                    new_level = self.LEVEL_ORDER.get(new_level_str, 0)
+                    
+                    # Cannot decrease from escalated level
+                    if new_level < old_level:
+                        self.current_level = old_level_str
+            except Case.DoesNotExist:
+                pass
+        
+        super().save(*args, **kwargs)
 
 
 class CaseNote(BaseModel):
@@ -968,16 +1173,20 @@ class CaseStatusHistory(BaseModel):
         help_text="New status"
     )
     
-    from_level = models.IntegerField(
+    from_level = models.CharField(
+        max_length=10,
         choices=CaseLevel.CHOICES,
         null=True,
-        blank=True
+        blank=True,
+        help_text="Previous level (L0/L1/L2/L3/L4)"
     )
     
-    to_level = models.IntegerField(
+    to_level = models.CharField(
+        max_length=10,
         choices=CaseLevel.CHOICES,
         null=True,
-        blank=True
+        blank=True,
+        help_text="New level (L0/L1/L2/L3/L4)"
     )
     
     changed_by = models.ForeignKey(
@@ -1004,6 +1213,324 @@ class CaseStatusHistory(BaseModel):
     
     def __str__(self):
         return f"Case {self.case_id}: {self.from_status} -> {self.to_status}"
+    
+    def save(self, *args, **kwargs):
+        """Prevent updates after creation (immutable)."""
+        if not self._state.adding:
+            raise PermissionError("Case status history records are immutable.")
+        super().save(*args, **kwargs)
+    
+    def delete(self, *args, **kwargs):
+        """Prevent deletion - history records are immutable."""
+        raise PermissionError("Case status history records cannot be deleted.")
+
+
+# =============================================================================
+# INVESTIGATION CHAT MODELS (New Workflow)
+# =============================================================================
+
+class MessageType:
+    """Investigation message type constants."""
+    TEXT = 'text'
+    MEDIA = 'media'
+    SYSTEM = 'system'
+    
+    CHOICES = [
+        (TEXT, 'Text Message'),
+        (MEDIA, 'Media Message'),
+        (SYSTEM, 'System Message'),
+    ]
+
+
+def investigation_media_path(instance, filename):
+    """
+    Generate secure storage path for investigation media.
+    
+    Path format: investigation_media/<case_uuid>/<message_uuid>.<ext>
+    """
+    import os
+    ext = os.path.splitext(filename)[1].lower() or '.bin'
+    return os.path.join(
+        'investigation_media',
+        str(instance.case_id),
+        f"{instance.id}{ext}"
+    )
+
+
+class InvestigationMessage(BaseModel):
+    """
+    Immutable chat message in case investigation.
+    
+    Design principles:
+    - Case IS the thread (no separate thread model)
+    - Messages are immutable (no edit after creation)
+    - Media embedded in message (no separate media model)
+    - System messages for automated events
+    - Locked when case is closed
+    
+    Access control:
+    - L0: Only if assigned to case
+    - L1/L2: If case is at their station
+    - L3/L4: If case is escalated to their level
+    """
+    
+    # Parent case (acts as thread)
+    case = models.ForeignKey(
+        Case,
+        on_delete=models.PROTECT,
+        related_name='investigation_messages',
+        help_text="Case this message belongs to"
+    )
+    
+    # Sender (null for system messages)
+    sender = models.ForeignKey(
+        'authentication.User',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='investigation_messages_sent',
+        help_text="User who sent this message (null for system)"
+    )
+    
+    # Snapshot of sender's role at message creation
+    sender_role = models.CharField(
+        max_length=20,
+        db_index=True,
+        help_text="Sender's role at time of sending (L0/L1/L2/L3/L4/SYSTEM)"
+    )
+    
+    # Message type
+    message_type = models.CharField(
+        max_length=10,
+        choices=MessageType.CHOICES,
+        default=MessageType.TEXT,
+        db_index=True,
+        help_text="Type of message"
+    )
+    
+    # Text content (for text and media-with-caption messages)
+    text_content = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Message text content"
+    )
+    
+    # Media attachment (for media messages)
+    file = models.FileField(
+        upload_to=investigation_media_path,
+        blank=True,
+        null=True,
+        help_text="Attached media file"
+    )
+    
+    file_name = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="Original filename"
+    )
+    
+    file_size = models.BigIntegerField(
+        blank=True,
+        null=True,
+        help_text="File size in bytes"
+    )
+    
+    file_type = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        help_text="MIME type of the file"
+    )
+    
+    class Meta:
+        db_table = 'investigation_messages'
+        verbose_name = 'Investigation Message'
+        verbose_name_plural = 'Investigation Messages'
+        ordering = ['created_at']
+        indexes = [
+            models.Index(fields=['case', 'created_at'], name='inv_msg_case_time_idx'),
+            models.Index(fields=['sender'], name='inv_msg_sender_idx'),
+            models.Index(fields=['created_at'], name='inv_msg_created_idx'),
+        ]
+    
+    def __str__(self):
+        sender_str = self.sender.identifier if self.sender else 'SYSTEM'
+        return f"Message in Case {self.case_id} by {sender_str}"
+    
+    @property
+    def content_type(self):
+        """Alias for file_type (MIME type)."""
+        return self.file_type
+    
+    def save(self, *args, **kwargs):
+        """Prevent updates after creation (immutable)."""
+        if not self._state.adding:
+            # Allow only soft-delete updates
+            update_fields = kwargs.get('update_fields')
+            if update_fields and set(update_fields) <= {'is_deleted', 'deleted_at', 'updated_at'}:
+                super().save(*args, **kwargs)
+                return
+            raise PermissionError("Investigation messages are immutable and cannot be edited.")
+        super().save(*args, **kwargs)
+    
+    def delete(self, *args, **kwargs):
+        """Prevent hard deletion - use soft_delete() instead."""
+        raise PermissionError("Investigation messages cannot be hard deleted. Use soft_delete() instead.")
+    
+    def soft_delete(self, deleted_by):
+        """
+        Soft delete message. Only the author can delete their own message.
+        System messages cannot be deleted.
+        
+        Args:
+            deleted_by: User attempting to delete the message
+            
+        Raises:
+            PermissionError: If user is not the author or message is a system message
+        """
+        from django.utils import timezone
+        
+        # System messages cannot be deleted
+        if self.message_type == 'system':
+            raise PermissionError("System messages cannot be deleted.")
+        
+        # Only author can delete their own message
+        if self.sender != deleted_by:
+            raise PermissionError("Only the message author can delete their message.")
+        
+        # Perform soft delete
+        self.is_deleted = True
+        self.deleted_at = timezone.now()
+        self.save(update_fields=['is_deleted', 'deleted_at', 'updated_at'])
+
+
+# =============================================================================
+# ESCALATION HISTORY (New Workflow)
+# =============================================================================
+
+class EscalationType:
+    """Escalation type constants."""
+    AUTO = 'auto'
+    MANUAL = 'manual'
+    
+    CHOICES = [
+        (AUTO, 'Automatic (SLA Breach)'),
+        (MANUAL, 'Manual Escalation'),
+    ]
+
+
+class EventType:
+    """Event type constants for EscalationHistory."""
+    ESCALATION = 'escalation'
+    ASSIGNMENT = 'assignment'
+    
+    CHOICES = [
+        (ESCALATION, 'Escalation'),
+        (ASSIGNMENT, 'Assignment'),
+    ]
+
+
+class EscalationHistory(BaseModel):
+    """
+    Audit trail for case escalation events.
+    
+    Records both:
+    - Automatic escalations (SLA breach)
+    - Manual escalations (officer-initiated)
+    
+    Immutable - no updates or deletes allowed.
+    """
+    
+    case = models.ForeignKey(
+        Case,
+        on_delete=models.PROTECT,
+        related_name='escalation_history',
+        help_text="Case that was escalated"
+    )
+    
+    # Event type (escalation vs assignment)
+    event_type = models.CharField(
+        max_length=15,
+        choices=EventType.CHOICES,
+        default=EventType.ESCALATION,
+        db_index=True,
+        help_text="Type of event (escalation or assignment)"
+    )
+    
+    from_level = models.CharField(
+        max_length=10,
+        blank=True,
+        null=True,
+        help_text="Level before escalation (L0/L1/L2/L3)"
+    )
+    
+    to_level = models.CharField(
+        max_length=10,
+        blank=True,
+        null=True,
+        help_text="Level after escalation (L3/L4)"
+    )
+    
+    escalation_type = models.CharField(
+        max_length=10,
+        choices=EscalationType.CHOICES,
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="Type of escalation (only for escalation events)"
+    )
+    
+    # Null for auto-escalations
+    escalated_by = models.ForeignKey(
+        'authentication.User',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='escalations_initiated',
+        help_text="User who initiated escalation (null for auto)"
+    )
+    
+    # For assignment events
+    assigned_officer = models.ForeignKey(
+        'authentication.User',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='assignment_history',
+        help_text="Officer assigned (for assignment events)"
+    )
+    
+    reason = models.TextField(
+        blank=True,
+        help_text="Reason for escalation or assignment notes"
+    )
+    
+    class Meta:
+        db_table = 'escalation_history'
+        verbose_name = 'Escalation History'
+        verbose_name_plural = 'Escalation Histories'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['case', 'created_at'], name='esc_hist_case_time_idx'),
+            models.Index(fields=['event_type'], name='esc_hist_event_type_idx'),
+            models.Index(fields=['escalation_type'], name='esc_hist_type_idx'),
+        ]
+    
+    def __str__(self):
+        if self.event_type == EventType.ASSIGNMENT:
+            return f"Case {self.case_id}: Assignment to {self.assigned_officer}"
+        return f"Case {self.case_id}: {self.from_level} -> {self.to_level} ({self.escalation_type})"
+    
+    def save(self, *args, **kwargs):
+        """Prevent updates after creation (immutable)."""
+        if not self._state.adding:
+            raise PermissionError("Escalation history records are immutable.")
+        super().save(*args, **kwargs)
+    
+    def delete(self, *args, **kwargs):
+        """Prevent deletion - history records are immutable."""
+        raise PermissionError("Escalation history records cannot be deleted.")
 
 
 text_content = models.TextField(

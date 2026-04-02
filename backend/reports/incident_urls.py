@@ -7,6 +7,7 @@ Provides endpoints for:
 - Case management (Authority handling)
 - Level-2 case actions (notes, solve)
 - Captain actions (forward, reject)
+- Investigation chat (messages)
 
 Part of the new Case Lifecycle system introduced in Step 2.
 """
@@ -29,6 +30,15 @@ from .views import (
     IncidentMediaListView,
     IncidentMediaDownloadView,
     IncidentMediaPreviewView,
+    # Assignment views
+    AssignCaseView,
+    AvailableOfficersView,
+    # Investigation chat views
+    InvestigationMessagesView,
+    SendMessageView,
+    SendMediaMessageView,
+    MessageMediaDownloadView,
+    DeleteMessageView,
 )
 
 app_name = 'incidents'
@@ -53,6 +63,17 @@ urlpatterns = [
     # Captain action endpoints
     path('cases/<uuid:case_id>/forward/', ForwardCaseView.as_view(), name='case-forward'),
     path('cases/<uuid:case_id>/reject/', RejectCaseView.as_view(), name='case-reject'),
+    
+    # Assignment endpoints (L1 assigns L0)
+    path('cases/<uuid:case_id>/assign/', AssignCaseView.as_view(), name='case-assign'),
+    path('cases/<uuid:case_id>/officers/', AvailableOfficersView.as_view(), name='case-available-officers'),
+    
+    # Investigation chat endpoints
+    path('cases/<uuid:case_id>/messages/', InvestigationMessagesView.as_view(), name='case-messages'),
+    path('cases/<uuid:case_id>/messages/send/', SendMessageView.as_view(), name='case-send-message'),
+    path('cases/<uuid:case_id>/messages/media/', SendMediaMessageView.as_view(), name='case-send-media'),
+    path('messages/<uuid:message_id>/download/', MessageMediaDownloadView.as_view(), name='message-media-download'),
+    path('messages/<uuid:message_id>/delete/', DeleteMessageView.as_view(), name='message-delete'),
     
     # Incident media endpoints
     path('<uuid:incident_id>/media/', IncidentMediaUploadView.as_view(), name='incident-media-upload'),

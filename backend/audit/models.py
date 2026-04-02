@@ -70,6 +70,13 @@ class AuditEventType:
     ESCALATION_APPROVED = 'escalation.approved'
     ESCALATION_REJECTED = 'escalation.rejected'
     
+    # Case events
+    CASE_CREATED = 'case.created'
+    CASE_ASSIGNED = 'case.assigned'
+    CASE_UNASSIGNED = 'case.unassigned'
+    CASE_REASSIGNED = 'case.reassigned'
+    CASE_STATUS_CHANGED = 'case.status.changed'
+    
     # Identity reveal events (critical)
     IDENTITY_REVEAL_REQUESTED = 'identity.reveal.requested'
     IDENTITY_REVEAL_APPROVED = 'identity.reveal.approved'
@@ -127,6 +134,13 @@ class AuditEventType:
         (ESCALATION_CREATED, 'Escalation Created'),
         (ESCALATION_APPROVED, 'Escalation Approved'),
         (ESCALATION_REJECTED, 'Escalation Rejected'),
+        
+        # Cases
+        (CASE_CREATED, 'Case Created'),
+        (CASE_ASSIGNED, 'Case Assigned'),
+        (CASE_UNASSIGNED, 'Case Unassigned'),
+        (CASE_REASSIGNED, 'Case Reassigned'),
+        (CASE_STATUS_CHANGED, 'Case Status Changed'),
         
         # Identity Reveal
         (IDENTITY_REVEAL_REQUESTED, 'Identity Reveal Requested'),

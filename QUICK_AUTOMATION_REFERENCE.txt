@@ -1,0 +1,156 @@
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                    JANMITRA AUTOMATION QUICK REFERENCE                    ║
+║                        All Settings Auto-Enabled ✅                        ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 🚀 ONE-COMMAND AUTOMATION                                               │
+└─────────────────────────────────────────────────────────────────────────┘
+
+  .\scripts\run_automation.ps1           # Run everything (recommended)
+  .\scripts\run_automation.ps1 -Test     # Run tests only
+  .\scripts\run_automation.ps1 -Setup    # Configure VS Code settings
+  .\scripts\screenshot_automation.ps1    # Take app screenshots
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ ⚙️  AUTO-ENABLED SETTINGS (No Manual Config Needed!)                    │
+└─────────────────────────────────────────────────────────────────────────┘
+
+  ✅ python.terminal.useEnvFile = true   ← THE ONE YOU ASKED ABOUT!
+  ✅ Auto-format on save
+  ✅ Python linting & type checking
+  ✅ Flutter debugging
+  ✅ Auto-import organization
+  ✅ .env file support
+  ✅ Git auto-fetch
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 🐛 DEBUGGING (VS Code)                                                  │
+└─────────────────────────────────────────────────────────────────────────┘
+
+  F5                                      # Start debugging
+  ↳ Select: "Python: Django"             # Debug backend
+  ↳ Select: "Flutter: Debug"             # Debug mobile app
+  
+  Set breakpoints by clicking line numbers in VS Code!
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 🧪 TESTING (VS Code Tasks)                                              │
+└─────────────────────────────────────────────────────────────────────────┘
+
+  Ctrl+Shift+P → Tasks: Run Task →
+    • Run Automated Tests              # Everything (default)
+    • Run Backend Tests                # Django only
+    • Run Flutter Tests                # Mobile only
+    • Start Docker Services
+    • Stop Docker Services
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 📊 AUTOMATED TEST REPORTS                                               │
+└─────────────────────────────────────────────────────────────────────────┘
+
+  Location: C:\janmitra\test-reports\
+  
+  ├── test-report-YYYYMMDD-HHMMSS.md    # Main report (auto-opens)
+  ├── logs\
+  │   ├── backend-tests.log
+  │   ├── flutter-tests.log
+  │   ├── flutter-analyze.log
+  │   ├── django-logs.log
+  │   └── docker-services.log
+  └── screenshots\                       # App screenshots
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 🔍 WHAT GETS TESTED AUTOMATICALLY                                       │
+└─────────────────────────────────────────────────────────────────────────┘
+
+  ✅ Environment (Docker, Python, Flutter)
+  ✅ Docker services (auto-starts if needed)
+  ✅ Django backend tests
+  ✅ Flutter mobile tests
+  ✅ API health endpoints
+  ✅ Database migrations
+  ✅ Code markers (TODO/FIXME/BUG)
+  ✅ Error logs analysis
+  ✅ Database connections
+  ✅ Static code analysis (Flutter analyze)
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 📸 SCREENSHOT AUTOMATION                                                │
+└─────────────────────────────────────────────────────────────────────────┘
+
+  # Automated (Android devices/emulators)
+  .\scripts\screenshot_automation.ps1
+  
+  # Screenshots saved to: test-reports\screenshots\
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 🔧 COMMON WORKFLOWS                                                     │
+└─────────────────────────────────────────────────────────────────────────┘
+
+  BEFORE COMMITTING:
+    .\scripts\run_automation.ps1 -Test
+    # Check the auto-opened report
+  
+  DEBUGGING ISSUE:
+    1. Set breakpoint in code
+    2. Press F5
+    3. Select debugger
+    4. Trigger issue
+  
+  TAKING SCREENSHOTS:
+    1. Start app: flutter run
+    2. Run: .\scripts\screenshot_automation.ps1
+  
+  FIRST TIME SETUP:
+    .\scripts\run_automation.ps1
+    # Updates .env and configures everything
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 📁 KEY FILES                                                            │
+└─────────────────────────────────────────────────────────────────────────┘
+
+  .vscode\settings.json         # All auto-enabled settings
+  .vscode\launch.json           # F5 debug configurations
+  .vscode\tasks.json            # Task runner configs
+  scripts\run_automation.ps1    # Master automation script
+  scripts\README.md             # Detailed documentation
+  AUTOMATION_SETUP_COMPLETE.md  # Full setup guide
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 🆘 TROUBLESHOOTING                                                      │
+└─────────────────────────────────────────────────────────────────────────┘
+
+  TESTS FAILED?
+    → Check: test-reports\test-report-*.md
+    → Check: test-reports\logs\
+  
+  DOCKER NOT FOUND?
+    → Install: winget install Docker.DockerDesktop
+  
+  FLUTTER NOT FOUND?
+    → Install: choco install flutter
+  
+  EXECUTION POLICY ERROR?
+    → Run as Admin: Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ ✨ SUMMARY                                                              │
+└─────────────────────────────────────────────────────────────────────────┘
+
+  Everything is automated and ready to use!
+  
+  ✅ No manual permissions needed
+  ✅ No manual settings to enable
+  ✅ Just run the scripts and debug!
+  
+  Quick Start:
+    .\scripts\run_automation.ps1 -Test
+    # Then press F5 to debug!
+
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                           HAPPY DEBUGGING! 🚀                             ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+Generated: 2026-04-02
+GitHub Copilot CLI
