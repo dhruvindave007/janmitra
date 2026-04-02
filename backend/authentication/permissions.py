@@ -94,6 +94,42 @@ class IsLevel1OrLevel2(permissions.BasePermission):
         return request.user.is_authority
 
 
+class IsOfficer(permissions.BasePermission):
+    """
+    Permission for any officer (L0-L4) - all police authority levels.
+    
+    This includes:
+    - L0: Station officer (assigned to cases)
+    - L1: Station supervisor
+    - L2: Station manager
+    - L3: Higher authority (handles escalated cases)
+    - L4: Top authority (final escalation)
+    
+    Does NOT include JanMitra users.
+    """
+    
+    message = "This action requires officer access."
+    
+    def has_permission(self, request, view):
+        from authentication.models import UserRole
+        
+        if not request.user.is_authenticated:
+            return False
+        
+        if request.user.is_revoked or not request.user.is_active:
+            return False
+        
+        # All officer roles (station + escalation levels)
+        officer_roles = [
+            UserRole.L0, UserRole.L1, UserRole.L2, 
+            UserRole.L3, UserRole.L4,
+            UserRole.LEVEL_0, UserRole.LEVEL_1, 
+            UserRole.LEVEL_2, UserRole.LEVEL_2_CAPTAIN
+        ]
+        
+        return request.user.role in officer_roles
+
+
 class IsJanMitra(permissions.BasePermission):
     """
     Permission for JanMitra members only.

@@ -22,23 +22,29 @@ from core.models import BaseModel
 class NotificationType:
     """Notification type constants."""
     NEW_CASE = 'new_case'
+    CASE_ASSIGNED = 'case_assigned'
+    CASE_UNASSIGNED = 'case_unassigned'
     CASE_ESCALATED = 'case_escalated'
     CASE_SOLVED = 'case_solved'
     CASE_REJECTED = 'case_rejected'
     CASE_CLOSED = 'case_closed'
     SLA_WARNING = 'sla_warning'
     SLA_BREACHED = 'sla_breached'
+    CHAT_MESSAGE = 'chat_message'
     ADMIN_ACTION = 'admin_action'
     GENERAL = 'general'
     
     CHOICES = [
-        (NEW_CASE, 'New Case Assigned'),
+        (NEW_CASE, 'New Case Created'),
+        (CASE_ASSIGNED, 'Case Assigned'),
+        (CASE_UNASSIGNED, 'Case Unassigned'),
         (CASE_ESCALATED, 'Case Escalated'),
         (CASE_SOLVED, 'Case Solved'),
         (CASE_REJECTED, 'Case Rejected'),
         (CASE_CLOSED, 'Case Closed'),
         (SLA_WARNING, 'SLA Warning'),
         (SLA_BREACHED, 'SLA Breached'),
+        (CHAT_MESSAGE, 'New Chat Message'),
         (ADMIN_ACTION, 'Admin Action'),
         (GENERAL, 'General'),
     ]
@@ -119,6 +125,29 @@ class Notification(BaseModel):
         null=True,
         blank=True,
         help_text="When the notification was read"
+    )
+    
+    # Push notification tracking
+    push_sent = models.BooleanField(
+        default=False,
+        help_text="Whether push notification was sent"
+    )
+    
+    push_sent_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When push notification was sent"
+    )
+    
+    push_attempts = models.PositiveSmallIntegerField(
+        default=0,
+        help_text="Number of push notification attempts"
+    )
+    
+    push_error = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Error message if push failed"
     )
     
     # Use custom manager

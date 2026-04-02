@@ -7,16 +7,107 @@ All notification creation should go through this service.
 Usage:
     from notifications.services import NotificationService
     
+    # New workflow notifications
+    NotificationService.notify_case_assigned(case, officer, assigned_by)
+    NotificationService.notify_case_escalated_new(case, from_level, to_level, escalated_by)
+    
+    # Legacy notifications
     NotificationService.notify_new_case(case)
     NotificationService.notify_case_escalated(case, from_level, to_level)
     NotificationService.notify_case_solved(case)
 """
 
+from typing import List, Optional
 from django.db import transaction
 from django.utils import timezone
 
 from authentication.models import User, UserRole
 from .models import Notification, NotificationType
+
+
+class PushNotificationService:
+    """
+    Service for handling push notifications.
+    
+    Currently a stub - actual FCM/APNs integration will be added later.
+    This service handles:
+    - Tracking push attempts
+    - Recording push errors
+    - Managing device tokens
+    """
+    
+    # Maximum push attempts before giving up
+    MAX_PUSH_ATTEMPTS = 3
+    
+    @classmethod
+    def send_push(cls, notification: Notification) -> bool:
+        """
+        Attempt to send a push notification.
+        
+        Args:
+            notification: Notification to send push for
+            
+        Returns:
+            True if push was sent successfully, False otherwise
+        """
+        # Increment attempt counter
+        notification.push_attempts += 1
+        
+        # Get device token
+        device_token = cls._get_device_token(notification.recipient)
+        
+        if not device_token:
+            notification.push_error = "No device token available"
+            notification.save(update_fields=['push_attempts', 'push_error', 'updated_at'])
+            return False
+        
+        # TODO: Implement actual FCM/APNs push
+        # For now, mark as sent (stub implementation)
+        try:
+            # Placeholder for actual push logic
+            # fcm_response = cls._send_fcm(device_token, notification)
+            
+            notification.push_sent = True
+            notification.push_sent_at = timezone.now()
+            notification.push_error = None
+            notification.save(update_fields=[
+                'push_sent', 'push_sent_at', 'push_attempts', 'push_error', 'updated_at'
+            ])
+            return True
+            
+        except Exception as e:
+            notification.push_error = str(e)[:500]  # Truncate error
+            notification.save(update_fields=['push_attempts', 'push_error', 'updated_at'])
+            return False
+    
+    @classmethod
+    def retry_failed_pushes(cls) -> int:
+        """
+        Retry failed push notifications.
+        
+        Called by cron job to retry pushes that failed.
+        
+        Returns:
+            Number of successfully retried pushes
+        """
+        # Get notifications that failed but haven't exceeded max attempts
+        failed = Notification.objects.filter(
+            push_sent=False,
+            push_attempts__lt=cls.MAX_PUSH_ATTEMPTS,
+            push_attempts__gt=0
+        ).select_related('recipient')[:100]  # Batch limit
+        
+        success_count = 0
+        for notification in failed:
+            if cls.send_push(notification):
+                success_count += 1
+        
+        return success_count
+    
+    @classmethod
+    def _get_device_token(cls, user: User) -> Optional[str]:
+        """Get device token for a user."""
+        return user.device_token if hasattr(user, 'device_token') else None
 
 
 class NotificationService:
@@ -400,6 +491,442 @@ class NotificationService:
             case=case,
             level=None,
         )
+    
+    # =========================================================================
+    # NEW WORKFLOW NOTIFICATIONS
+    # =========================================================================
+    
+    @classmethod
+    def _get_users_by_new_role(cls, role: str):
+        """Get all active users with a specific new workflow role."""
+        return User.objects.filter(
+            role=role,
+            is_active=True,
+            is_deleted=False,
+            status='active'
+        )
+    
+    @classmethod
+    def _get_station_officers(cls, police_station, roles=None):
+        """Get officers at a specific police station."""
+        if roles is None:
+            roles = [UserRole.L0, UserRole.L1, UserRole.L2]
+        
+        return User.objects.filter(
+            role__in=roles,
+            police_station=police_station,
+            is_active=True,
+            is_deleted=False,
+            status='active'
+        )
+    
+    @classmethod
+    def notify_case_routed(cls, case):
+        """
+        Notify L1 at station that a new case has been routed.
+        
+        Called when: Incident is submitted and routed to station.
+        Recipients: L1 (PSO) at the assigned station.
+        """
+        if not case.police_station:
+            return 0
+        
+        l1_officers = cls._get_station_officers(
+            case.police_station, 
+            roles=[UserRole.L1]
+        )
+        
+        title = "New Case Routed to Your Station"
+        message = (
+            f"A new incident has been routed to your station.\n\n"
+            f"Category: {case.incident.get_category_display()}\n"
+            f"SLA Deadline: {case.sla_deadline.strftime('%Y-%m-%d %H:%M')}\n\n"
+            f"Please assign an officer to investigate."
+        )
+        
+        count = cls._bulk_notify(
+            recipients=l1_officers,
+            title=title,
+            message=message,
+            notification_type=NotificationType.NEW_CASE,
+            case=case,
+            level=None,
+        )
+        
+        # Trigger push notifications
+        cls._trigger_push_for_case(case, NotificationType.NEW_CASE)
+        
+        return count
+    
+    @classmethod
+    def notify_case_assigned(cls, case, officer, assigned_by):
+        """
+        Notify L0 officer that they've been assigned a case.
+        
+        Called when: L1 assigns L0 to a case.
+        Recipients: The assigned L0 officer.
+        """
+        title = "New Case Assigned to You"
+        message = (
+            f"You have been assigned a new case.\n\n"
+            f"Assigned by: {assigned_by.identifier}\n"
+            f"Category: {case.incident.get_category_display()}\n"
+            f"SLA Deadline: {case.sla_deadline.strftime('%Y-%m-%d %H:%M')}\n\n"
+            f"Description: {case.incident.text_content[:200]}"
+        )
+        
+        notification = cls._create_notification(
+            recipient=officer,
+            title=title,
+            message=message,
+            notification_type=NotificationType.CASE_ASSIGNED,
+            case=case,
+            level=None,
+        )
+        
+        # Trigger push
+        PushNotificationService.send_push(notification)
+        
+        return notification
+    
+    @classmethod
+    def notify_case_unassigned(cls, case, officer, unassigned_by, reason=''):
+        """
+        Notify L0 officer that they've been removed from a case.
+        
+        Called when: L1 unassigns L0 from a case.
+        Recipients: The unassigned L0 officer.
+        """
+        title = "Case Assignment Removed"
+        message = (
+            f"You have been unassigned from a case.\n\n"
+            f"Unassigned by: {unassigned_by.identifier}\n"
+            f"Reason: {reason or 'No reason provided'}\n\n"
+            f"Case: {case.incident.text_content[:100]}"
+        )
+        
+        return cls._create_notification(
+            recipient=officer,
+            title=title,
+            message=message,
+            notification_type=NotificationType.CASE_UNASSIGNED,
+            case=case,
+            level=None,
+        )
+    
+    @classmethod
+    def notify_case_escalated_new(cls, case, from_level, to_level, escalated_by=None, reason=''):
+        """
+        Notify officers at new level about escalation (new workflow).
+        
+        Called when: Case is escalated from station to L3, or L3 to L4.
+        Recipients: All officers at the new level.
+        """
+        if to_level == 'L3':
+            recipients = cls._get_users_by_new_role(UserRole.L3)
+        elif to_level == 'L4':
+            recipients = cls._get_users_by_new_role(UserRole.L4)
+        else:
+            return 0
+        
+        escalator = escalated_by.identifier if escalated_by else "System (SLA Breach)"
+        
+        title = f"Case Escalated to {to_level}"
+        message = (
+            f"A case has been escalated to your level.\n\n"
+            f"From: {from_level}\n"
+            f"To: {to_level}\n"
+            f"Escalated by: {escalator}\n"
+            f"Reason: {reason or 'SLA breach'}\n"
+            f"New SLA Deadline: {case.sla_deadline.strftime('%Y-%m-%d %H:%M')}\n\n"
+            f"Description: {case.incident.text_content[:200]}"
+        )
+        
+        count = cls._bulk_notify(
+            recipients=recipients,
+            title=title,
+            message=message,
+            notification_type=NotificationType.CASE_ESCALATED,
+            case=case,
+            level=None,
+        )
+        
+        cls._trigger_push_for_case(case, NotificationType.CASE_ESCALATED)
+        
+        return count
+    
+    @classmethod
+    def notify_chat_message(cls, case, message, sender):
+        """
+        Notify relevant users about a new chat message.
+        
+        Called when: New investigation message is sent.
+        Recipients: Other officers with access to the case.
+        """
+        # Get all users who should be notified
+        recipients = []
+        
+        # L0 assigned officer (if not sender)
+        if case.assigned_officer and case.assigned_officer != sender:
+            recipients.append(case.assigned_officer)
+        
+        # L1/L2 at station (if not sender)
+        if case.police_station:
+            station_officers = cls._get_station_officers(
+                case.police_station,
+                roles=[UserRole.L1, UserRole.L2]
+            ).exclude(id=sender.id)
+            recipients.extend(station_officers)
+        
+        # L3/L4 if escalated
+        if case.current_level in ['L3', 'L4']:
+            l3_users = cls._get_users_by_new_role(UserRole.L3).exclude(id=sender.id)
+            recipients.extend(l3_users)
+        
+        if case.current_level == 'L4':
+            l4_users = cls._get_users_by_new_role(UserRole.L4).exclude(id=sender.id)
+            recipients.extend(l4_users)
+        
+        # Deduplicate
+        recipients = list(set(recipients))
+        
+        if not recipients:
+            return 0
+        
+        sender_display = sender.identifier if sender else "System"
+        preview = message.text_content[:50] if message.text_content else "[Media]"
+        
+        title = f"New Message from {sender_display}"
+        msg_text = (
+            f"New message in case investigation.\n\n"
+            f"From: {sender_display}\n"
+            f"Preview: {preview}"
+        )
+        
+        return cls._bulk_notify(
+            recipients=recipients,
+            title=title,
+            message=msg_text,
+            notification_type=NotificationType.CHAT_MESSAGE,
+            case=case,
+            level=None,
+        )
+    
+    @classmethod
+    def notify_sla_warning_new(cls, case, hours_remaining):
+        """
+        Notify relevant officers about approaching SLA (new workflow).
+        
+        Recipients depend on current level:
+        - L0/L1/L2: Station officers
+        - L3: L3 users
+        - L4: No notification (no SLA)
+        """
+        recipients = []
+        
+        if case.current_level in ['L0', 'L1', 'L2']:
+            if case.assigned_officer:
+                recipients.append(case.assigned_officer)
+            if case.police_station:
+                l1_officers = cls._get_station_officers(
+                    case.police_station,
+                    roles=[UserRole.L1]
+                )
+                recipients.extend(l1_officers)
+        elif case.current_level == 'L3':
+            recipients.extend(cls._get_users_by_new_role(UserRole.L3))
+        
+        recipients = list(set(recipients))
+        
+        if not recipients:
+            return 0
+        
+        title = f"⚠️ SLA Warning: {hours_remaining}h remaining"
+        message = (
+            f"A case is approaching its SLA deadline.\n\n"
+            f"Time remaining: {hours_remaining} hours\n"
+            f"Deadline: {case.sla_deadline.strftime('%Y-%m-%d %H:%M')}\n"
+            f"Current Level: {case.current_level}\n\n"
+            f"Please take action to avoid escalation."
+        )
+        
+        count = cls._bulk_notify(
+            recipients=recipients,
+            title=title,
+            message=message,
+            notification_type=NotificationType.SLA_WARNING,
+            case=case,
+            level=None,
+        )
+        
+        cls._trigger_push_for_case(case, NotificationType.SLA_WARNING)
+        
+        return count
+    
+    @classmethod
+    def notify_sla_breached_new(cls, case):
+        """
+        Notify about SLA breach (new workflow).
+        
+        Recipients: Current level officers + next level officers.
+        """
+        recipients = []
+        
+        if case.current_level in ['L0', 'L1', 'L2']:
+            # Station officers + L3 (next level)
+            if case.police_station:
+                station_officers = cls._get_station_officers(case.police_station)
+                recipients.extend(station_officers)
+            recipients.extend(cls._get_users_by_new_role(UserRole.L3))
+        elif case.current_level == 'L3':
+            # L3 + L4
+            recipients.extend(cls._get_users_by_new_role(UserRole.L3))
+            recipients.extend(cls._get_users_by_new_role(UserRole.L4))
+        
+        recipients = list(set(recipients))
+        
+        if not recipients:
+            return 0
+        
+        title = "⚠️ SLA BREACHED - Case Escalating"
+        message = (
+            f"A case has breached its SLA deadline!\n\n"
+            f"Deadline was: {case.sla_deadline.strftime('%Y-%m-%d %H:%M')}\n"
+            f"Level: {case.current_level}\n\n"
+            f"The case will be automatically escalated."
+        )
+        
+        count = cls._bulk_notify(
+            recipients=recipients,
+            title=title,
+            message=message,
+            notification_type=NotificationType.SLA_BREACHED,
+            case=case,
+            level=None,
+        )
+        
+        cls._trigger_push_for_case(case, NotificationType.SLA_BREACHED)
+        
+        return count
+    
+    @classmethod
+    def notify_case_solved_new(cls, case, solved_by):
+        """
+        Notify L2 (PI) that case needs closure (new workflow).
+        
+        Called when: L0 marks case as solved.
+        Recipients: L2 at the station.
+        """
+        if not case.police_station:
+            return 0
+        
+        l2_officers = cls._get_station_officers(
+            case.police_station,
+            roles=[UserRole.L2]
+        )
+        
+        title = "Case Solved - Pending Closure"
+        message = (
+            f"A case has been marked as solved.\n\n"
+            f"Solved by: {solved_by.identifier}\n"
+            f"Solution: {case.solution_notes[:200] if case.solution_notes else 'No notes'}\n\n"
+            f"Please review and close the case."
+        )
+        
+        return cls._bulk_notify(
+            recipients=l2_officers,
+            title=title,
+            message=message,
+            notification_type=NotificationType.CASE_SOLVED,
+            case=case,
+            level=None,
+        )
+    
+    @classmethod
+    def notify_case_closed_new(cls, case, closed_by):
+        """
+        Notify relevant officers that case has been closed (new workflow).
+        
+        Called when: L2 closes a solved case.
+        Recipients: Assigned L0 officer.
+        """
+        if not case.assigned_officer:
+            return 0
+        
+        title = "Case Closed"
+        message = (
+            f"Your case has been closed.\n\n"
+            f"Closed by: {closed_by.identifier}\n"
+            f"Status: {case.status}\n\n"
+            f"Thank you for your work on this case."
+        )
+        
+        return cls._create_notification(
+            recipient=case.assigned_officer,
+            title=title,
+            message=message,
+            notification_type=NotificationType.CASE_CLOSED,
+            case=case,
+            level=None,
+        )
+    
+    @classmethod
+    def notify_new_case_l1_l2(cls, case):
+        """
+        Notify L1 and L2 officers at the police station about a new case.
+        
+        Called when: Citizen submits an incident and case is created.
+        Recipients: L1 (PSO) and L2 (PI) at the assigned police station only.
+        """
+        if not case.police_station:
+            return 0
+        
+        recipients = cls._get_station_officers(
+            case.police_station,
+            roles=[UserRole.L1, UserRole.L2]
+        )
+        
+        if not recipients:
+            return 0
+        
+        title = "New Case Created"
+        message = (
+            f"A new incident has been reported to your station.\n\n"
+            f"Category: {case.incident.get_category_display()}\n"
+            f"SLA Deadline: {case.sla_deadline.strftime('%Y-%m-%d %H:%M')}\n\n"
+            f"Description: {case.incident.text_content[:200]}"
+        )
+        
+        count = cls._bulk_notify(
+            recipients=recipients,
+            title=title,
+            message=message,
+            notification_type=NotificationType.NEW_CASE,
+            case=case,
+            level=None,
+        )
+        
+        cls._trigger_push_for_case(case, NotificationType.NEW_CASE)
+        
+        return count
+    
+    @classmethod
+    def _trigger_push_for_case(cls, case, notification_type):
+        """
+        Trigger push notifications for recent notifications on a case.
+        
+        Called after bulk creating notifications to send pushes.
+        """
+        recent_notifications = Notification.objects.filter(
+            case=case,
+            notification_type=notification_type,
+            push_sent=False,
+            push_attempts=0,
+            created_at__gte=timezone.now() - timezone.timedelta(minutes=1)
+        ).select_related('recipient')[:50]
+        
+        for notification in recent_notifications:
+            PushNotificationService.send_push(notification)
     
     # =========================================================================
     # UTILITY METHODS

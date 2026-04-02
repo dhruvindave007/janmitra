@@ -6,6 +6,9 @@ Contains abstract base models that provide:
 - Soft delete functionality
 - Timestamp tracking
 - Common audit fields
+
+Also contains shared models:
+- PoliceStation: Station registry for incident routing
 """
 
 import uuid
@@ -164,3 +167,85 @@ class AuditableModel(BaseModel):
         self.deleted_at = timezone.now()
         self.deleted_by = deleted_by
         self.save(update_fields=['is_deleted', 'deleted_at', 'deleted_by', 'updated_at'])
+
+
+# =============================================================================
+# POLICE STATION MODEL
+# =============================================================================
+
+class PoliceStation(BaseModel):
+    """
+    Police station registry for incident routing.
+    
+    Used to:
+    - Route incidents to nearest station based on GPS
+    - Assign officers to stations
+    - Filter cases by station
+    
+    Routing uses haversine distance (no polygon boundaries).
+    """
+    
+    name = models.CharField(
+        max_length=255,
+        help_text="Station name"
+    )
+    
+    code = models.CharField(
+        max_length=50,
+        unique=True,
+        db_index=True,
+        help_text="Unique station code (e.g., PS-MH-MUM-001)"
+    )
+    
+    # GPS coordinates for nearest-station routing
+    latitude = models.DecimalField(
+        max_digits=9,
+        decimal_places=6,
+        help_text="Station latitude coordinate"
+    )
+    
+    longitude = models.DecimalField(
+        max_digits=9,
+        decimal_places=6,
+        help_text="Station longitude coordinate"
+    )
+    
+    # Administrative hierarchy
+    city = models.CharField(
+        max_length=100,
+        db_index=True,
+        help_text="City name"
+    )
+    
+    district = models.CharField(
+        max_length=100,
+        db_index=True,
+        help_text="District name"
+    )
+    
+    state = models.CharField(
+        max_length=100,
+        db_index=True,
+        help_text="State name"
+    )
+    
+    # Status
+    is_active = models.BooleanField(
+        default=True,
+        db_index=True,
+        help_text="Whether station is active and accepting cases"
+    )
+    
+    class Meta:
+        db_table = 'police_stations'
+        verbose_name = 'Police Station'
+        verbose_name_plural = 'Police Stations'
+        ordering = ['state', 'district', 'city', 'name']
+        indexes = [
+            models.Index(fields=['latitude', 'longitude'], name='station_coords_idx'),
+            models.Index(fields=['state', 'district', 'city'], name='station_hierarchy_idx'),
+            models.Index(fields=['is_active', 'state'], name='station_active_state_idx'),
+        ]
+    
+    def __str__(self):
+        return f"{self.name} ({self.code})"

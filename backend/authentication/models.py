@@ -30,32 +30,52 @@ class UserRole:
     """
     User role constants.
     
-    LEVEL_0: Super admin - system administrator
-    LEVEL_1: Senior authority - final decision maker
-    LEVEL_2: Field authority - report handler  
-    LEVEL_2_CAPTAIN: Level 2 captain - supervises Level 2 officers
-    LEVEL_3 / JANMITRA: Anonymous citizen member
+    New workflow roles:
+    - L0: Field Officer (works cases, assigned by L1)
+    - L1: PSO - Police Station Officer (assigns L0, manages station)
+    - L2: PI - Police Inspector (closes cases solved by L0)
+    - L3: Higher Authority (handles escalated cases)
+    - L4: Top Authority (final escalation, no SLA)
+    - JANMITRA: Anonymous citizen member
     """
-    LEVEL_0 = 'level_0'
-    LEVEL_1 = 'level_1'
-    LEVEL_2 = 'level_2'
-    LEVEL_2_CAPTAIN = 'level_2_captain'
-    LEVEL_3 = 'level_3'  # JanMitra (alias below)
-    JANMITRA = 'level_3'  # Alias for clarity
+    L0 = 'L0'
+    L1 = 'L1'
+    L2 = 'L2'
+    L3 = 'L3'
+    L4 = 'L4'
+    JANMITRA = 'JANMITRA'
+    
+    # Legacy aliases for backward compatibility
+    LEVEL_0 = 'level_0'  # Deprecated: use L0
+    LEVEL_1 = 'level_1'  # Deprecated: use L1
+    LEVEL_2 = 'level_2'  # Deprecated: use L2
+    LEVEL_2_CAPTAIN = 'level_2_captain'  # Deprecated
+    LEVEL_3 = 'level_3'  # Deprecated: use JANMITRA
     
     CHOICES = [
-        (LEVEL_0, 'Level 0 - Super Admin'),
-        (LEVEL_1, 'Level 1 - Senior Authority'),
-        (LEVEL_2, 'Level 2 - Field Authority'),
-        (LEVEL_2_CAPTAIN, 'Level 2 Captain - Field Supervisor'),
-        (LEVEL_3, 'Level 3 - JanMitra Member'),
+        # New workflow roles
+        (L0, 'L0 - Field Officer'),
+        (L1, 'L1 - PSO'),
+        (L2, 'L2 - PI'),
+        (L3, 'L3 - Higher Authority'),
+        (L4, 'L4 - Top Authority'),
+        (JANMITRA, 'Citizen'),
+        # Legacy roles (kept for backward compatibility)
+        (LEVEL_0, 'Level 0 - Super Admin (Legacy)'),
+        (LEVEL_1, 'Level 1 - Senior Authority (Legacy)'),
+        (LEVEL_2, 'Level 2 - Field Authority (Legacy)'),
+        (LEVEL_2_CAPTAIN, 'Level 2 Captain - Field Supervisor (Legacy)'),
+        (LEVEL_3, 'Level 3 - JanMitra Member (Legacy)'),
     ]
     
-    # Authority roles (non-anonymous)
-    AUTHORITY_ROLES = [LEVEL_0, LEVEL_1, LEVEL_2, LEVEL_2_CAPTAIN]
+    # Authority roles (non-anonymous) - both new and legacy
+    AUTHORITY_ROLES = [L0, L1, L2, L3, L4, LEVEL_0, LEVEL_1, LEVEL_2, LEVEL_2_CAPTAIN]
+    
+    # Station-level officers
+    STATION_OFFICERS = [L0, L1, L2]
     
     # All roles that can receive reports
-    REPORT_RECEIVERS = [LEVEL_0, LEVEL_1, LEVEL_2, LEVEL_2_CAPTAIN]
+    REPORT_RECEIVERS = [L0, L1, L2, L3, L4, LEVEL_0, LEVEL_1, LEVEL_2, LEVEL_2_CAPTAIN]
 
 
 class UserStatus:
@@ -194,7 +214,7 @@ class User(AbstractBaseUser, PermissionsMixin, BaseModel):
     role = models.CharField(
         max_length=20,
         choices=UserRole.CHOICES,
-        default=UserRole.LEVEL_3,
+        default=UserRole.JANMITRA,
         db_index=True,
         help_text="User role determining access level"
     )
@@ -205,6 +225,16 @@ class User(AbstractBaseUser, PermissionsMixin, BaseModel):
         default=UserStatus.PENDING,
         db_index=True,
         help_text="Current account status"
+    )
+    
+    # Police station assignment (for station officers L0/L1/L2)
+    police_station = models.ForeignKey(
+        'core.PoliceStation',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='officers',
+        help_text="Assigned police station (for L0/L1/L2 officers)"
     )
     
     is_anonymous = models.BooleanField(
@@ -246,6 +276,14 @@ class User(AbstractBaseUser, PermissionsMixin, BaseModel):
         help_text="Timestamp when password was last changed"
     )
     
+    # Push notification device token (FCM/APNs)
+    device_token = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="FCM/APNs token for push notifications"
+    )
+    
     # Revocation tracking
     revoked_at = models.DateTimeField(
         null=True,
@@ -279,6 +317,7 @@ class User(AbstractBaseUser, PermissionsMixin, BaseModel):
         indexes = [
             models.Index(fields=['role', 'status']),
             models.Index(fields=['identifier']),
+            models.Index(fields=['police_station', 'role'], name='user_station_role_idx'),
         ]
     
     def __str__(self):
@@ -287,33 +326,64 @@ class User(AbstractBaseUser, PermissionsMixin, BaseModel):
         return self.identifier
     
     @property
+    def is_l0(self):
+        """Check if user is L0 (Field Officer)."""
+        return self.role == UserRole.L0
+    
+    @property
+    def is_l1(self):
+        """Check if user is L1 (PSO)."""
+        return self.role == UserRole.L1
+    
+    @property
+    def is_l2(self):
+        """Check if user is L2 (PI)."""
+        return self.role == UserRole.L2
+    
+    @property
+    def is_l3(self):
+        """Check if user is L3 (Higher Authority)."""
+        return self.role == UserRole.L3
+    
+    @property
+    def is_l4(self):
+        """Check if user is L4 (Top Authority)."""
+        return self.role == UserRole.L4
+    
+    @property
+    def is_station_officer(self):
+        """Check if user is a station-level officer (L0/L1/L2)."""
+        return self.role in UserRole.STATION_OFFICERS
+    
+    # Legacy properties for backward compatibility (support both new and legacy roles)
+    @property
     def is_level_0(self):
-        """Check if user is Level 0 (super admin)."""
-        return self.role == UserRole.LEVEL_0
+        """Check if user is Level 0 (field officer)."""
+        return self.role in (UserRole.L0, UserRole.LEVEL_0)
     
     @property
     def is_level_1(self):
         """Check if user is Level 1 (senior authority)."""
-        return self.role == UserRole.LEVEL_1
+        return self.role in (UserRole.L1, UserRole.LEVEL_1)
     
     @property
     def is_level_2(self):
         """Check if user is Level 2 (field authority)."""
-        return self.role == UserRole.LEVEL_2
+        return self.role in (UserRole.L2, UserRole.LEVEL_2)
     
     @property
     def is_level_2_captain(self):
-        """Check if user is Level 2 Captain (field supervisor)."""
+        """Check if user is Level 2 Captain (field supervisor) - Legacy."""
         return self.role == UserRole.LEVEL_2_CAPTAIN
     
     @property
     def is_janmitra(self):
         """Check if user is a JanMitra member."""
-        return self.role == UserRole.LEVEL_3
+        return self.role in [UserRole.JANMITRA, UserRole.LEVEL_3]
     
     @property
     def is_authority(self):
-        """Check if user is an authority (Level 0, 1, 2 or Captain)."""
+        """Check if user is an authority (any officer role)."""
         return self.role in UserRole.AUTHORITY_ROLES
     
     @property

@@ -12,7 +12,7 @@ Provides API endpoints for:
 from rest_framework import generics, views, status
 from rest_framework.response import Response
 
-from authentication.permissions import IsAuthenticated, IsLevel1OrLevel2
+from authentication.permissions import IsAuthenticated, IsOfficer
 from .models import Notification
 from .serializers import NotificationSerializer, NotificationListSerializer, UnreadCountSerializer
 from .services import NotificationService
@@ -31,7 +31,7 @@ class NotificationListView(generics.ListAPIView):
     Returns: Paginated list of notifications, newest first.
     """
     
-    permission_classes = [IsLevel1OrLevel2]
+    permission_classes = [IsOfficer]
     serializer_class = NotificationListSerializer
     
     def get_queryset(self):
@@ -59,7 +59,7 @@ class NotificationDetailView(generics.RetrieveAPIView):
     User can only view their own notifications.
     """
     
-    permission_classes = [IsLevel1OrLevel2]
+    permission_classes = [IsOfficer]
     serializer_class = NotificationSerializer
     
     def get_queryset(self):
@@ -73,7 +73,7 @@ class MarkNotificationReadView(views.APIView):
     POST /api/v1/notifications/{id}/read/
     """
     
-    permission_classes = [IsLevel1OrLevel2]
+    permission_classes = [IsOfficer]
     
     def post(self, request, pk):
         try:
@@ -103,7 +103,7 @@ class MarkAllReadView(views.APIView):
     POST /api/v1/notifications/read-all/
     """
     
-    permission_classes = [IsLevel1OrLevel2]
+    permission_classes = [IsOfficer]
     
     def post(self, request):
         count = NotificationService.mark_all_read(request.user)
@@ -121,7 +121,7 @@ class UnreadCountView(views.APIView):
     GET /api/v1/notifications/unread-count/
     """
     
-    permission_classes = [IsLevel1OrLevel2]
+    permission_classes = [IsOfficer]
     
     def get(self, request):
         count = NotificationService.get_unread_count(request.user)
