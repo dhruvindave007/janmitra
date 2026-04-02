@@ -507,6 +507,17 @@ class NotificationService:
         )
     
     @classmethod
+    def _get_l3_for_station(cls, police_station):
+        """Get L3 officers whose assigned_stations include this station."""
+        return User.objects.filter(
+            role=UserRole.L3,
+            assigned_stations=police_station,
+            is_active=True,
+            is_deleted=False,
+            status='active'
+        )
+    
+    @classmethod
     def _get_station_officers(cls, police_station, roles=None):
         """Get officers at a specific police station."""
         if roles is None:
@@ -620,10 +631,12 @@ class NotificationService:
         Notify officers at new level about escalation (new workflow).
         
         Called when: Case is escalated from station to L3, or L3 to L4.
-        Recipients: All officers at the new level.
+        Recipients:
+        - L3: Only L3 officers whose assigned_stations include case's station
+        - L4: All L4 officers (full access)
         """
         if to_level == 'L3':
-            recipients = cls._get_users_by_new_role(UserRole.L3)
+            recipients = cls._get_l3_for_station(case.police_station) if case.police_station else User.objects.none()
         elif to_level == 'L4':
             recipients = cls._get_users_by_new_role(UserRole.L4)
         else:
@@ -678,11 +691,12 @@ class NotificationService:
             ).exclude(id=sender.id)
             recipients.extend(station_officers)
         
-        # L3/L4 if escalated
-        if case.current_level in ['L3', 'L4']:
-            l3_users = cls._get_users_by_new_role(UserRole.L3).exclude(id=sender.id)
+        # L3 if escalated (only L3 with this station in their assigned_stations)
+        if case.current_level in ['L3', 'L4'] and case.police_station:
+            l3_users = cls._get_l3_for_station(case.police_station).exclude(id=sender.id)
             recipients.extend(l3_users)
         
+        # L4 if at L4 level (full access)
         if case.current_level == 'L4':
             l4_users = cls._get_users_by_new_role(UserRole.L4).exclude(id=sender.id)
             recipients.extend(l4_users)
@@ -734,7 +748,8 @@ class NotificationService:
                 )
                 recipients.extend(l1_officers)
         elif case.current_level == 'L3':
-            recipients.extend(cls._get_users_by_new_role(UserRole.L3))
+            if case.police_station:
+                recipients.extend(cls._get_l3_for_station(case.police_station))
         
         recipients = list(set(recipients))
         
@@ -773,14 +788,15 @@ class NotificationService:
         recipients = []
         
         if case.current_level in ['L0', 'L1', 'L2']:
-            # Station officers + L3 (next level)
+            # Station officers + L3 for this station (next level)
             if case.police_station:
                 station_officers = cls._get_station_officers(case.police_station)
                 recipients.extend(station_officers)
-            recipients.extend(cls._get_users_by_new_role(UserRole.L3))
+                recipients.extend(cls._get_l3_for_station(case.police_station))
         elif case.current_level == 'L3':
-            # L3 + L4
-            recipients.extend(cls._get_users_by_new_role(UserRole.L3))
+            # L3 for this station + all L4
+            if case.police_station:
+                recipients.extend(cls._get_l3_for_station(case.police_station))
             recipients.extend(cls._get_users_by_new_role(UserRole.L4))
         
         recipients = list(set(recipients))

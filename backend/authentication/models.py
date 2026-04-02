@@ -237,6 +237,14 @@ class User(AbstractBaseUser, PermissionsMixin, BaseModel):
         help_text="Assigned police station (for L0/L1/L2 officers)"
     )
     
+    # Regional station assignment (for L3 officers who oversee multiple stations)
+    assigned_stations = models.ManyToManyField(
+        'core.PoliceStation',
+        blank=True,
+        related_name='regional_officers',
+        help_text="Police stations under this user's jurisdiction (for L3 regional officers)"
+    )
+    
     is_anonymous = models.BooleanField(
         default=False,
         help_text="True for JanMitra members (identity protected)"
