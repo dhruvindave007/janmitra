@@ -18,6 +18,7 @@ from .views import (
     RevokeUserView,
     DeviceSessionListView,
     InvalidateSessionView,
+    RegisterDeviceTokenView,
 )
 
 app_name = 'authentication'
@@ -50,4 +51,7 @@ urlpatterns = [
     # Session management
     path('sessions/', DeviceSessionListView.as_view(), name='session-list'),
     path('sessions/<uuid:session_id>/invalidate/', InvalidateSessionView.as_view(), name='session-invalidate'),
+    
+    # Push notification device token
+    path('device-token/', RegisterDeviceTokenView.as_view(), name='register-device-token'),
 ]
