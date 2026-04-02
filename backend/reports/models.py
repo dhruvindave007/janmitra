@@ -2,14 +2,12 @@ def visible_cases_for_user(user):
     """
     Get cases visible to a user based on their role.
     
-    Visibility rules (new workflow):
+    Visibility rules:
     - L0: Only cases assigned to them
     - L1/L2: All cases at their police station
-    - L3: Cases escalated to L3 or L4 level
-    - L4: Cases at L4 level
+    - L3: Escalated cases (L3/L4 level) from their assigned stations
+    - L4: All cases (full access)
     - JANMITRA: No access to case list
-    
-    Legacy roles fall back to numeric level matching.
     """
     from authentication.models import UserRole
     
@@ -21,23 +19,27 @@ def visible_cases_for_user(user):
     
     # New workflow roles
     if role == UserRole.L0:
-        # L0 sees only cases assigned to them
         return qs.filter(assigned_officer=user)
     
     if role in [UserRole.L1, UserRole.L2]:
-        # L1/L2 see all cases at their station
         station = getattr(user, 'police_station', None)
         if station:
             return qs.filter(police_station=station)
         return Case.objects.none()
     
     if role == UserRole.L3:
-        # L3 sees cases escalated to L3 or L4
-        return qs.filter(current_level__in=['L3', 'L4'])
+        # L3 sees escalated cases only from their assigned stations
+        station_ids = user.assigned_stations.values_list('id', flat=True)
+        if station_ids:
+            return qs.filter(
+                current_level__in=['L3', 'L4'],
+                police_station_id__in=station_ids
+            )
+        return Case.objects.none()
     
     if role == UserRole.L4:
-        # L4 sees cases at L4 level
-        return qs.filter(current_level='L4')
+        # L4 has full access to all cases
+        return qs
     
     if role == UserRole.JANMITRA:
         return Case.objects.none()

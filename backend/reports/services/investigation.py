@@ -430,30 +430,30 @@ class InvestigationService:
         Access rules:
         - L0: Only if assigned to the case
         - L1/L2: If case is at their police station
-        - L3: If case is escalated to L3 or L4
-        - L4: Always (top authority)
+        - L3: If case is escalated AND from their assigned stations
+        - L4: Always (full access)
         - JANMITRA/others: No access
         
-        Args:
-            case: Case to check access for
-            user: User to validate
-            
         Raises:
             AccessDeniedError: If user doesn't have access
         """
         role = user.role
         
-        # L4 has access to all cases
+        # L4 has full access to all cases
         if role == UserRole.L4:
             return
         
-        # L3 has access to escalated cases (L3 or L4 level)
+        # L3 has access to escalated cases from their assigned stations
         if role == UserRole.L3:
-            if case.current_level in ['L3', 'L4']:
-                return
-            raise AccessDeniedError(
-                "L3 can only access cases escalated to L3 or L4 level"
-            )
+            if case.current_level not in ['L3', 'L4']:
+                raise AccessDeniedError(
+                    "L3 can only access cases escalated to L3 or L4 level"
+                )
+            if not user.assigned_stations.filter(id=case.police_station_id).exists():
+                raise AccessDeniedError(
+                    "L3 can only access cases from their assigned stations"
+                )
+            return
         
         # L0 must be assigned to the case
         if role == UserRole.L0:

@@ -147,6 +147,10 @@ def setup():
 
     CTX['s1'] = s1; CTX['s2'] = s2; CTX['users'] = users; CTX['pw'] = pw
 
+    # Assign L3 user regional stations (L3 oversees station1 only, not station2)
+    l3 = users['test_l3_user']
+    l3.assigned_stations.set([s1])
+
     # Create invite code for JanMitra registration
     invite, _ = InviteCode.objects.get_or_create(
         code='TEST-INVITE-001',
