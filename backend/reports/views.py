@@ -46,6 +46,7 @@ from authentication.permissions import (
 )
 from audit.models import AuditLog, AuditEventType
 from notifications.services import NotificationService
+from .services import BroadcastIncidentService, IncidentCreationError
 
 
 class ReportCreateView(views.APIView):
@@ -498,168 +499,100 @@ class ReportCloseView(views.APIView):
 
 class IncidentBroadcastView(views.APIView):
     """
-    Broadcast an incident from JanMitra app.
+    Create incident from citizen submission.
     
     POST /api/v1/incidents/broadcast/
     
     Request (multipart/form-data or JSON):
     {
-        "text_content": "Incident description",
-        "category": "public_safety",
-        "latitude": 12.9716,  (optional)
-        "longitude": 77.5946,  (optional)
+        "description": "Incident description",  # or "text_content"
+        "category": "public_safety",  (optional)
+        "latitude": 12.9716,
+        "longitude": 77.5946,
         "media_files": [file1, file2, file3]  (optional, max 3)
     }
     
-    Creates an Incident (immutable), a Case (for lifecycle tracking),
-    and IncidentMedia records for any uploaded files.
+    Response:
+    {
+        "incident_id": "uuid",
+        "case_id": "uuid",
+        "media_uploaded": 2
+    }
     """
     
-    # Accept any authenticated user to broadcast incidents (JanMitra flag not required)
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
     
     def post(self, request):
-        # Validate required fields
-        text_content = request.data.get('text_content', '').strip()
-        if not text_content:
+        # Accept both "description" and "text_content" for flexibility
+        description = request.data.get('description') or request.data.get('text_content', '')
+        description = description.strip() if description else ''
+        
+        if not description:
             return Response(
-                {'text_content': ['This field is required.']},
+                {'error': 'description is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-        category = request.data.get('category', IncidentCategory.GENERAL)
-        if category not in dict(IncidentCategory.CHOICES):
-            category = IncidentCategory.GENERAL
         
         latitude = request.data.get('latitude')
         longitude = request.data.get('longitude')
         
-        # Area metadata (resolved from frontend geocoding)
-        area_name = request.data.get('area_name', '').strip() or None
-        city = request.data.get('city', '').strip() or None
-        state = request.data.get('state', '').strip() or None
+        # Validate latitude and longitude are provided together
+        if (latitude is None) != (longitude is None):
+            return Response(
+                {'error': 'Both latitude and longitude are required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
-        # Enforce max length of 255 for area fields
-        if area_name and len(area_name) > 255:
-            area_name = area_name[:255]
-        if city and len(city) > 255:
-            city = city[:255]
-        if state and len(state) > 255:
-            state = state[:255]
-        
-        # Use transaction to ensure Incident + Case are created atomically
-        with transaction.atomic():
-            # Create the Incident (immutable submission)
-            incident = Incident.objects.create(
-                submitted_by=request.user,
-                text_content=text_content,
-                category=category,
+        try:
+            incident, case, media_uploaded, media_errors = BroadcastIncidentService.execute(
+                user=request.user,
+                text_content=description,
+                category=request.data.get('category', IncidentCategory.GENERAL),
                 latitude=latitude,
                 longitude=longitude,
-                area_name=area_name,
-                city=city,
-                state=state,
+                media_files=request.FILES.getlist('media_files') or request.FILES.getlist('media'),
+                area_name=request.data.get('area_name'),
+                city=request.data.get('city'),
+                state=request.data.get('state'),
             )
-            
-            # Create the Case (lifecycle tracking)
-            # Default SLA: 24 hours for Level 2
-            sla_deadline = timezone.now() + timedelta(hours=24)
-            
-            case = Case.objects.create(
-                incident=incident,
-                current_level=CaseLevel.LEVEL_2,
-                status=CaseStatus.OPEN,
-                sla_deadline=sla_deadline,
-            )
-            
-            # Create initial status history
-            CaseStatusHistory.objects.create(
-                case=case,
-                from_status=None,
-                to_status=CaseStatus.OPEN,
-                from_level=None,
-                to_level=CaseLevel.LEVEL_2,
-                changed_by=request.user,
-                reason="Initial submission"
+        except IncidentCreationError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Handle media file uploads (outside main transaction for atomicity)
-        # Media upload failure should NOT fail the incident creation
-        media_uploaded = 0
-        media_errors = []
-        media_files = request.FILES.getlist('media_files')
-        
-        if media_files:
-            import os
-            for uploaded_file in media_files[:IncidentMediaType.MAX_FILES_PER_INCIDENT]:
-                try:
-                    # Determine media type from extension
-                    ext = os.path.splitext(uploaded_file.name)[1].lower()
-                    media_type = None
-                    for mtype, extensions in IncidentMediaType.ALLOWED_EXTENSIONS.items():
-                        if ext in extensions:
-                            media_type = mtype
-                            break
-                    
-                    if media_type is None:
-                        media_errors.append(f"Invalid file type: {uploaded_file.name}")
-                        continue
-                    
-                    # Check file size
-                    max_size = IncidentMediaType.MAX_SIZES.get(media_type, 10 * 1024 * 1024)
-                    if uploaded_file.size > max_size:
-                        media_errors.append(f"File too large: {uploaded_file.name}")
-                        continue
-                    
-                    # Create IncidentMedia record
-                    IncidentMedia.objects.create(
-                        incident=incident,
-                        file=uploaded_file,
-                        media_type=media_type,
-                        original_filename=uploaded_file.name,
-                        file_size=uploaded_file.size,
-                        content_type=getattr(uploaded_file, 'content_type', ''),
-                        uploaded_by=request.user,
-                    )
-                    media_uploaded += 1
-                except Exception as e:
-                    media_errors.append(f"Failed to save {uploaded_file.name}: {str(e)}")
-        
-        # Notify Level 2 authorities about the new case (outside transaction - non-critical)
+        # Audit log (non-blocking)
         try:
-            NotificationService.notify_new_case(case)
+            AuditLog.log(
+                event_type=AuditEventType.REPORT_CREATED,
+                actor=request.user,
+                target=incident,
+                request=request,
+                success=True,
+                description=f"Incident created: {incident.id}",
+                metadata={
+                    'incident_id': str(incident.id),
+                    'case_id': str(case.id),
+                    'police_station': str(case.police_station_id) if case.police_station else None,
+                }
+            )
         except Exception:
-            pass  # Non-critical - don't fail the request
+            pass
         
-        # Audit log (outside transaction - non-critical)
-        AuditLog.log(
-            event_type=AuditEventType.REPORT_CREATED,
-            actor=request.user,
-            target=incident,
-            request=request,
-            success=True,
-            description=f"Incident broadcast: {incident.id}",
-            metadata={
-                'incident_id': str(incident.id),
-                'case_id': str(case.id),
-                'category': category,
-                'media_uploaded': media_uploaded,
-                'media_errors': media_errors,
-            }
-        )
-        
+        # Clean minimal response
         response_data = {
-            'message': 'Incident broadcast received',
             'incident_id': str(incident.id),
             'case_id': str(case.id),
             'media_uploaded': media_uploaded,
+            'message': 'Incident reported successfully',
         }
+        if case.police_station:
+            response_data['police_station'] = case.police_station.name
         if media_errors:
             response_data['media_errors'] = media_errors
         
         return Response(response_data, status=status.HTTP_201_CREATED)
-
 
 class AddCaseNoteView(views.APIView):
     """
@@ -893,33 +826,43 @@ from .serializers import CaseListSerializer, CaseDetailSerializer, JanMitraCaseS
 
 class CaseListView(generics.ListAPIView):
     """
-    List cases for authorities based on their role and level.
+    List cases for all roles based on visibility rules.
     
     GET /api/v1/incidents/cases/
     
-    STRICT VISIBILITY RULES:
-    - JanMitra: NEVER sees case list (403 Forbidden)
-    - Level-2 Officer: sees ONLY current_level=2 cases
-    - Level-2 Captain: sees current_level=2 cases (can see escalated read-only)
-    - Level-1 Authority: sees ONLY current_level=1 cases
-    - Level-0 Authority: sees ONLY current_level=0 cases
+    Visibility rules:
+    - L0: Only cases assigned to them
+    - L1/L2: All cases at their police station
+    - L3: Cases escalated to L3 or L4 level
+    - L4: Cases at L4 level
+    - JANMITRA: No access (403 Forbidden)
     
     Query parameters:
-    - status: Filter by status (open, solved, rejected)
+    - status: Filter by status (new, assigned, in_progress, escalated, resolved, closed)
+    - page: Page number (default: 1)
+    - page_size: Items per page (default: 20, max: 100)
     """
     
-    permission_classes = [IsLevel1OrLevel2]
+    permission_classes = [IsAuthenticated]
     serializer_class = CaseListSerializer
     
     def get_queryset(self):
         from .models import visible_cases_for_user
+        from authentication.models import UserRole
+        
         user = self.request.user
-        if getattr(user, 'is_janmitra', False):
+        
+        # JANMITRA has no access
+        if getattr(user, 'role', None) == UserRole.JANMITRA:
             return Case.objects.none()
+        
         queryset = visible_cases_for_user(user)
+        
+        # Optional status filter
         status_filter = self.request.query_params.get('status')
         if status_filter:
             queryset = queryset.filter(status=status_filter)
+        
         return queryset.order_by('-created_at')
 
 
@@ -970,23 +913,42 @@ class CaseDetailView(views.APIView):
     GET /api/v1/incidents/cases/{case_id}/
     
     Enforces same visibility rules as CaseListView.
-    Returns 404 if case is not at user's visible level.
+    Returns 403 PermissionDenied if user cannot access the case.
+    Returns 404 if case does not exist.
     """
     
-    permission_classes = [IsLevel1OrLevel2]
-    
-
-    def get_queryset(self):
-        from .models import visible_cases_for_user
-        user = self.request.user
-        if getattr(user, 'is_janmitra', False):
-            return Case.objects.none()
-        return visible_cases_for_user(user).select_related('incident', 'incident__submitted_by').prefetch_related('incident__media_files', 'notes', 'notes__author')
+    permission_classes = [IsAuthenticated]
 
     def get(self, request, case_id):
-        from django.shortcuts import get_object_or_404
-        queryset = self.get_queryset()
-        case = get_object_or_404(queryset, id=case_id)
+        from .models import visible_cases_for_user
+        from authentication.models import UserRole
+        from rest_framework.exceptions import PermissionDenied
+        
+        user = request.user
+        
+        # JANMITRA has no access to case details
+        if getattr(user, 'role', None) == UserRole.JANMITRA:
+            raise PermissionDenied("JanMitra users cannot access case details")
+        
+        # Check if case exists first
+        try:
+            case = Case.objects.select_related(
+                'incident', 'incident__submitted_by', 
+                'police_station', 'assigned_officer', 'assigned_by'
+            ).prefetch_related(
+                'incident__media_files', 'notes', 'notes__author'
+            ).get(id=case_id, is_deleted=False)
+        except Case.DoesNotExist:
+            return Response(
+                {'error': 'Case not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Check if user has access via visible_cases_for_user
+        visible_ids = visible_cases_for_user(user).values_list('id', flat=True)
+        if case.id not in visible_ids:
+            raise PermissionDenied("You do not have access to this case")
+        
         serializer = CaseDetailSerializer(case, context={'request': request})
         data = serializer.data
         if 'media_files' not in data or not data['media_files']:
@@ -1444,4 +1406,446 @@ class IncidentMediaPreviewView(views.APIView):
             return Response(
                 {'detail': 'Failed to generate preview.'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+# =============================================================================
+# ASSIGNMENT VIEWS (L1 assigns L0 to cases)
+# =============================================================================
+
+from .services import (
+    AssignmentService,
+    AssignmentError,
+    InvalidOfficerError,
+    InvalidAssignerError,
+    CaseNotAssignableError,
+)
+from authentication.models import User
+
+
+class AssignCaseView(views.APIView):
+    """
+    Assign an L0 officer to a case. Overwrites existing assignment.
+    
+    POST /api/v1/incidents/cases/<case_id>/assign/
+    
+    Request:
+    {
+        "officer_id": "uuid",
+        "notes": "optional"
+    }
+    
+    Response:
+    {
+        "case_id": "uuid",
+        "officer_id": "uuid",
+        "assigned_at": "iso_timestamp"
+    }
+    
+    Rules:
+    - Only L1 can assign
+    - Officer must be L0 at same station
+    - Overwrites existing assignment (only one L0 per case)
+    """
+    
+    permission_classes = [IsLevel1]
+    
+    def post(self, request, case_id):
+        try:
+            case = Case.objects.get(id=case_id, is_deleted=False)
+        except Case.DoesNotExist:
+            return Response({'error': 'Case not found'}, status=status.HTTP_404_NOT_FOUND)
+        
+        officer_id = request.data.get('officer_id')
+        if not officer_id:
+            return Response({'error': 'officer_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            officer = User.objects.get(id=officer_id, is_deleted=False)
+        except User.DoesNotExist:
+            return Response({'error': 'Officer not found'}, status=status.HTTP_404_NOT_FOUND)
+        
+        try:
+            updated_case = AssignmentService.assign_officer(
+                case=case,
+                officer=officer,
+                assigned_by=request.user,
+                notes=request.data.get('notes', '')
+            )
+        except InvalidOfficerError as e:
+            return Response({'error': str(e), 'code': 'invalid_officer'}, status=status.HTTP_400_BAD_REQUEST)
+        except InvalidAssignerError as e:
+            return Response({'error': str(e), 'code': 'invalid_assigner'}, status=status.HTTP_403_FORBIDDEN)
+        except CaseNotAssignableError as e:
+            return Response({'error': str(e), 'code': 'case_not_assignable'}, status=status.HTTP_400_BAD_REQUEST)
+        except AssignmentError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            AuditLog.log(
+                event_type=AuditEventType.CASE_ASSIGNED,
+                actor=request.user,
+                target=updated_case,
+                request=request,
+                success=True,
+                description=f"Case {case_id} assigned to {officer.identifier}",
+                metadata={'case_id': str(case_id), 'officer_id': str(officer_id)}
+            )
+        except Exception:
+            pass
+        
+        return Response({
+            'case_id': str(updated_case.id),
+            'officer_id': str(officer.id),
+            'officer_identifier': officer.identifier,
+            'assigned_at': updated_case.assigned_at.isoformat() if updated_case.assigned_at else None,
+        })
+
+
+class AvailableOfficersView(views.APIView):
+    """
+    List L0 officers available for assignment.
+    
+    GET /api/v1/incidents/cases/<case_id>/officers/
+    """
+    
+    permission_classes = [IsLevel1]
+    
+    def get(self, request, case_id):
+        try:
+            case = Case.objects.get(id=case_id, is_deleted=False)
+        except Case.DoesNotExist:
+            return Response({'error': 'Case not found'}, status=status.HTTP_404_NOT_FOUND)
+        
+        if request.user.police_station != case.police_station:
+            return Response({'error': 'Not your station'}, status=status.HTTP_403_FORBIDDEN)
+        
+        officers = AssignmentService.get_available_officers(case)
+        
+        return Response({
+            'officers': [
+                {
+                    'id': str(o.id),
+                    'identifier': o.identifier,
+                    'workload': AssignmentService.get_officer_workload(o),
+                }
+                for o in officers
+            ]
+        })
+
+
+# =============================================================================
+# INVESTIGATION CHAT VIEWS
+# =============================================================================
+
+class InvestigationMessagesView(views.APIView):
+    """
+    Get investigation chat messages for a case.
+    
+    GET /api/v1/incidents/cases/<case_id>/messages/
+    Query params:
+    - limit: max messages to return (default 50)
+    - before_id: get messages before this ID (pagination)
+    - after_id: get messages after this ID (new messages)
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, case_id):
+        try:
+            case = Case.objects.get(id=case_id, is_deleted=False)
+        except Case.DoesNotExist:
+            return Response(
+                {'error': 'Case not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        from .services import InvestigationService, AccessDeniedError
+        
+        try:
+            # Get query params
+            limit = int(request.query_params.get('limit', 50))
+            limit = min(max(limit, 1), 100)  # Clamp between 1 and 100
+            before_id = request.query_params.get('before_id')
+            after_id = request.query_params.get('after_id')
+            
+            messages = InvestigationService.get_messages(
+                case=case,
+                user=request.user,
+                limit=limit,
+                before_id=before_id,
+                after_id=after_id
+            )
+            
+            return Response({
+                'messages': [
+                    {
+                        'id': str(m.id),
+                        'sender_id': str(m.sender.id) if m.sender else None,
+                        'sender_identifier': m.sender.identifier if m.sender else 'SYSTEM',
+                        'sender_role': m.sender_role,
+                        'message_type': m.message_type,
+                        'text_content': m.text_content,
+                        'file_name': m.file_name,
+                        'file_size': m.file_size,
+                        'file_type': m.file_type,
+                        'has_media': bool(m.file),
+                        'created_at': m.created_at.isoformat(),
+                    }
+                    for m in messages
+                ],
+                'count': len(messages),
+                'case_id': str(case_id),
+                'is_chat_locked': case.is_chat_locked,
+            })
+            
+        except AccessDeniedError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+
+class SendMessageView(views.APIView):
+    """
+    Send a text message to case investigation chat.
+    
+    POST /api/v1/incidents/cases/<case_id>/messages/
+    {
+        "text": "message content"
+    }
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request, case_id):
+        try:
+            case = Case.objects.get(id=case_id, is_deleted=False)
+        except Case.DoesNotExist:
+            return Response(
+                {'error': 'Case not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        text = request.data.get('text', '').strip()
+        if not text:
+            return Response(
+                {'error': 'Message text is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        from .services import (
+            InvestigationService, 
+            AccessDeniedError, 
+            ChatLockedError,
+            InvalidMessageError
+        )
+        
+        try:
+            message = InvestigationService.send_message(
+                case=case,
+                sender=request.user,
+                text=text
+            )
+            
+            return Response({
+                'message': {
+                    'id': str(message.id),
+                    'sender_id': str(message.sender.id),
+                    'sender_identifier': message.sender.identifier,
+                    'sender_role': message.sender_role,
+                    'message_type': message.message_type,
+                    'text_content': message.text_content,
+                    'created_at': message.created_at.isoformat(),
+                }
+            }, status=status.HTTP_201_CREATED)
+            
+        except AccessDeniedError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except ChatLockedError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except InvalidMessageError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+
+class SendMediaMessageView(views.APIView):
+    """
+    Send a media message to case investigation chat.
+    
+    POST /api/v1/incidents/cases/<case_id>/messages/media/
+    Content-Type: multipart/form-data
+    - file: media file
+    - caption: optional text caption
+    """
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+    
+    def post(self, request, case_id):
+        try:
+            case = Case.objects.get(id=case_id, is_deleted=False)
+        except Case.DoesNotExist:
+            return Response(
+                {'error': 'Case not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        file = request.FILES.get('file')
+        if not file:
+            return Response(
+                {'error': 'File is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        caption = request.data.get('caption', '')
+        
+        from .services import (
+            InvestigationService,
+            AccessDeniedError,
+            ChatLockedError,
+            InvalidMessageError
+        )
+        
+        try:
+            message = InvestigationService.send_media_message(
+                case=case,
+                sender=request.user,
+                file=file,
+                file_name=file.name,
+                caption=caption
+            )
+            
+            return Response({
+                'message': {
+                    'id': str(message.id),
+                    'sender_id': str(message.sender.id),
+                    'sender_identifier': message.sender.identifier,
+                    'sender_role': message.sender_role,
+                    'message_type': message.message_type,
+                    'text_content': message.text_content,
+                    'file_name': message.file_name,
+                    'file_size': message.file_size,
+                    'file_type': message.file_type,
+                    'has_media': bool(message.file),
+                    'created_at': message.created_at.isoformat(),
+                }
+            }, status=status.HTTP_201_CREATED)
+            
+        except AccessDeniedError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except ChatLockedError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except InvalidMessageError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+
+class MessageMediaDownloadView(views.APIView):
+    """
+    Download media attachment from an investigation message.
+    
+    GET /api/v1/incidents/messages/<message_id>/download/
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, message_id):
+        from .models import InvestigationMessage
+        from django.http import FileResponse, Http404
+        
+        try:
+            message = InvestigationMessage.objects.select_related('case').get(
+                id=message_id, 
+                is_deleted=False
+            )
+        except InvestigationMessage.DoesNotExist:
+            return Response(
+                {'error': 'Message not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        if not message.file:
+            return Response(
+                {'error': 'Message has no media attachment'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        from .services import InvestigationService, AccessDeniedError
+        
+        # Check access to the case
+        try:
+            InvestigationService._validate_access(message.case, request.user)
+        except AccessDeniedError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Return file
+        try:
+            response = FileResponse(
+                message.file.open('rb'),
+                content_type=message.file_type or 'application/octet-stream'
+            )
+            response['Content-Disposition'] = f'attachment; filename="{message.file_name or "file"}"'
+            return response
+        except FileNotFoundError:
+            return Response(
+                {'error': 'File not found on server'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+
+class DeleteMessageView(views.APIView):
+    """
+    Delete an investigation message (soft delete).
+    Only the author can delete their own message.
+    
+    DELETE /api/v1/incidents/messages/<message_id>/delete/
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def delete(self, request, message_id):
+        from .models import InvestigationMessage
+        from .services import InvestigationService, AccessDeniedError
+        
+        try:
+            message = InvestigationMessage.objects.select_related('case').get(
+                id=message_id,
+                is_deleted=False
+            )
+        except InvestigationMessage.DoesNotExist:
+            return Response(
+                {'error': 'Message not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        try:
+            InvestigationService.delete_message(message, request.user)
+            return Response(
+                {'message': 'Message deleted successfully'},
+                status=status.HTTP_200_OK
+            )
+        except AccessDeniedError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except PermissionError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_403_FORBIDDEN
             )
