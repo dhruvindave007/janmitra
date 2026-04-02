@@ -604,3 +604,38 @@ class InvalidateSessionView(views.APIView):
             {'detail': 'Session has been invalidated.'},
             status=status.HTTP_200_OK
         )
+
+
+class RegisterDeviceTokenView(views.APIView):
+    """
+    Register FCM/APNs device token for push notifications.
+    
+    POST /api/v1/auth/device-token/
+    {
+        "device_token": "fcm_token_string"
+    }
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        device_token = request.data.get('device_token', '').strip()
+        
+        if not device_token:
+            return Response(
+                {'error': 'device_token is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if len(device_token) > 255:
+            return Response(
+                {'error': 'device_token is too long'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        request.user.device_token = device_token
+        request.user.save(update_fields=['device_token'])
+        
+        return Response(
+            {'detail': 'Device token registered successfully'},
+            status=status.HTTP_200_OK
+        )
