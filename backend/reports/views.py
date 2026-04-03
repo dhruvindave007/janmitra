@@ -644,6 +644,8 @@ class AddCaseNoteView(views.APIView):
 class SolveCaseView(views.APIView):
     """
     Mark a case as solved.
+    L0/L1/L2 can mark cases as solved. This does NOT close the case.
+    L2 must then close the case after reviewing.
     
     POST /api/v1/incidents/{case_id}/solve/
     """
@@ -659,9 +661,11 @@ class SolveCaseView(views.APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        if case.status != CaseStatus.OPEN:
+        # Allow solving from any non-terminal status
+        terminal = {CaseStatus.SOLVED, CaseStatus.CLOSED, CaseStatus.REJECTED, CaseStatus.RESOLVED}
+        if case.status in terminal:
             return Response(
-                {'detail': 'Case is not open.'},
+                {'detail': f'Case is already {case.status}. Cannot solve.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -683,13 +687,73 @@ class SolveCaseView(views.APIView):
             reason=solution_notes
         )
         
-        # Notify relevant authorities about the solution
+        # Notify L2 at same station that case needs closure
         try:
-            NotificationService.notify_case_solved(case, request.user)
+            NotificationService.notify_case_solved_new(case, request.user)
         except Exception:
             pass  # Non-critical
         
         return Response({'detail': 'Case marked as solved.'})
+
+
+class CloseCaseView(views.APIView):
+    """
+    Close a solved case. Only L2 (PI) can close cases.
+    
+    POST /api/v1/incidents/{case_id}/close/
+    """
+    
+    permission_classes = [IsLevel1OrLevel2]
+    
+    def post(self, request, case_id):
+        try:
+            case = Case.objects.get(id=case_id, is_deleted=False)
+        except Case.DoesNotExist:
+            return Response(
+                {'detail': 'Case not found.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Only L2+ can close cases
+        user = request.user
+        if not (user.is_level_2 or user.is_level_2_captain or 
+                getattr(user, 'role', None) in ['L2', 'L3', 'L4']):
+            return Response(
+                {'detail': 'Only L2 or higher can close cases.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Can only close solved cases
+        if case.status != CaseStatus.SOLVED:
+            return Response(
+                {'detail': f'Case must be solved before closing. Current status: {case.status}.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        closure_notes = request.data.get('closure_notes', '')
+        
+        old_status = case.status
+        case.status = CaseStatus.CLOSED
+        case.closed_at = timezone.now()
+        case.closed_by = request.user
+        case.save()
+        
+        # Status history
+        CaseStatusHistory.objects.create(
+            case=case,
+            from_status=old_status,
+            to_status=CaseStatus.CLOSED,
+            changed_by=request.user,
+            reason=closure_notes or 'Case closed after review'
+        )
+        
+        # Notify assigned officer
+        try:
+            NotificationService.notify_case_closed_new(case, request.user)
+        except Exception:
+            pass  # Non-critical
+        
+        return Response({'detail': 'Case closed successfully.'})
 
 
 class ForwardCaseView(views.APIView):
@@ -712,9 +776,11 @@ class ForwardCaseView(views.APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        if case.status != CaseStatus.OPEN:
+        # Allow forwarding from any non-terminal status
+        terminal = {CaseStatus.SOLVED, CaseStatus.CLOSED, CaseStatus.REJECTED, CaseStatus.RESOLVED}
+        if case.status in terminal:
             return Response(
-                {'detail': 'Case is not open.'},
+                {'detail': f'Case is already {case.status}. Cannot forward.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -780,9 +846,11 @@ class RejectCaseView(views.APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        if case.status != CaseStatus.OPEN:
+        # Allow rejection from any non-terminal status
+        terminal = {CaseStatus.SOLVED, CaseStatus.CLOSED, CaseStatus.REJECTED, CaseStatus.RESOLVED}
+        if case.status in terminal:
             return Response(
-                {'detail': 'Case is not open.'},
+                {'detail': f'Case is already {case.status}. Cannot reject.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -888,7 +956,8 @@ class OpenCasesView(generics.ListAPIView):
         
         queryset = Case.objects.select_related('incident', 'incident__submitted_by').filter(
             is_deleted=False,
-            status=CaseStatus.OPEN
+        ).exclude(
+            status__in=[CaseStatus.SOLVED, CaseStatus.CLOSED, CaseStatus.REJECTED, CaseStatus.RESOLVED]
         )
         
         # STRICT role-based filtering
