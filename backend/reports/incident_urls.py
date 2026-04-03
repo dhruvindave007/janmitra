@@ -17,6 +17,7 @@ from .views import (
     IncidentBroadcastView,
     AddCaseNoteView,
     SolveCaseView,
+    CloseCaseView,
     ForwardCaseView,
     RejectCaseView,
     # List views
@@ -59,6 +60,7 @@ urlpatterns = [
     # Level-2 case action endpoints
     path('cases/<uuid:case_id>/notes/', AddCaseNoteView.as_view(), name='case-add-note'),
     path('cases/<uuid:case_id>/solve/', SolveCaseView.as_view(), name='case-solve'),
+    path('cases/<uuid:case_id>/close/', CloseCaseView.as_view(), name='case-close'),
     
     # Captain action endpoints
     path('cases/<uuid:case_id>/forward/', ForwardCaseView.as_view(), name='case-forward'),
