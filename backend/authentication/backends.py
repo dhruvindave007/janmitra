@@ -47,7 +47,10 @@ class DeviceBoundJWTAuthentication(JWTAuthentication):
             InvalidToken: If token or device validation fails
         """
         # First, perform standard JWT authentication
-        result = super().authenticate(request)
+        try:
+            result = super().authenticate(request)
+        except Exception as e:
+            raise
         
         if result is None:
             return None
