@@ -17,55 +17,119 @@ Usage:
     NotificationService.notify_case_solved(case)
 """
 
+import logging
 from typing import List, Optional
 from django.db import transaction
 from django.utils import timezone
+from django.conf import settings
+from pathlib import Path
 
 from authentication.models import User, UserRole
 from .models import Notification, NotificationType
 
+logger = logging.getLogger(__name__)
+
+# Firebase Admin SDK initialization (singleton)
+_firebase_app = None
+_firebase_init_attempted = False
+
+
+def _get_firebase_app():
+    """Lazily initialize Firebase Admin SDK. Returns app or None."""
+    global _firebase_app, _firebase_init_attempted
+    if _firebase_init_attempted:
+        return _firebase_app
+    _firebase_init_attempted = True
+    try:
+        import firebase_admin
+        from firebase_admin import credentials
+
+        # Look for service account key in multiple locations
+        key_paths = [
+            Path(settings.BASE_DIR) / 'firebase-service-account.json',
+            Path(settings.BASE_DIR) / 'firebase_credentials.json',
+            Path(settings.BASE_DIR).parent / 'firebase-service-account.json',
+        ]
+        # Also check env var
+        import os
+        env_path = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
+        if env_path:
+            key_paths.insert(0, Path(env_path))
+
+        for key_path in key_paths:
+            if key_path.exists():
+                cred = credentials.Certificate(str(key_path))
+                _firebase_app = firebase_admin.initialize_app(cred)
+                logger.info(f'[FCM] Firebase Admin initialized from {key_path}')
+                return _firebase_app
+
+        logger.warning('[FCM] No Firebase service account key found. Push notifications disabled.')
+        logger.warning(f'[FCM] Searched: {[str(p) for p in key_paths]}')
+        return None
+    except Exception as e:
+        logger.error(f'[FCM] Firebase Admin init failed: {e}')
+        return None
+
 
 class PushNotificationService:
     """
-    Service for handling push notifications.
+    Service for sending push notifications via Firebase Cloud Messaging.
     
-    Currently a stub - actual FCM/APNs integration will be added later.
-    This service handles:
-    - Tracking push attempts
-    - Recording push errors
-    - Managing device tokens
+    Requires firebase-service-account.json in the backend directory.
+    Gracefully degrades if Firebase is not configured.
     """
     
-    # Maximum push attempts before giving up
     MAX_PUSH_ATTEMPTS = 3
     
     @classmethod
     def send_push(cls, notification: Notification) -> bool:
-        """
-        Attempt to send a push notification.
-        
-        Args:
-            notification: Notification to send push for
-            
-        Returns:
-            True if push was sent successfully, False otherwise
-        """
-        # Increment attempt counter
+        """Send a push notification via FCM."""
         notification.push_attempts += 1
         
-        # Get device token
         device_token = cls._get_device_token(notification.recipient)
-        
         if not device_token:
             notification.push_error = "No device token available"
             notification.save(update_fields=['push_attempts', 'push_error', 'updated_at'])
             return False
         
-        # TODO: Implement actual FCM/APNs push
-        # For now, mark as sent (stub implementation)
+        app = _get_firebase_app()
+        if app is None:
+            notification.push_error = "Firebase not configured"
+            notification.save(update_fields=['push_attempts', 'push_error', 'updated_at'])
+            logger.warning(f'[FCM] Skipping push for notification {notification.id} - Firebase not configured')
+            return False
+        
         try:
-            # Placeholder for actual push logic
-            # fcm_response = cls._send_fcm(device_token, notification)
+            from firebase_admin import messaging
+
+            # Build FCM message
+            data_payload = {
+                'notification_id': str(notification.id),
+                'type': notification.notification_type,
+                'click_action': 'FLUTTER_NOTIFICATION_CLICK',
+            }
+            if notification.case_id:
+                data_payload['case_id'] = str(notification.case_id)
+
+            message = messaging.Message(
+                notification=messaging.Notification(
+                    title=notification.title,
+                    body=notification.message[:200],
+                ),
+                data=data_payload,
+                token=device_token,
+                android=messaging.AndroidConfig(
+                    priority='high',
+                    notification=messaging.AndroidNotification(
+                        channel_id='janmitra_high',
+                        priority='high',
+                        default_sound=True,
+                    ),
+                ),
+            )
+
+            response = messaging.send(message)
+            logger.info(f'[FCM] Push sent: {response} for notification {notification.id}')
             
             notification.push_sent = True
             notification.push_sent_at = timezone.now()
@@ -76,26 +140,27 @@ class PushNotificationService:
             return True
             
         except Exception as e:
-            notification.push_error = str(e)[:500]  # Truncate error
+            error_str = str(e)[:500]
+            logger.error(f'[FCM] Push failed for notification {notification.id}: {error_str}')
+            notification.push_error = error_str
             notification.save(update_fields=['push_attempts', 'push_error', 'updated_at'])
+            
+            # If token is invalid, clear it
+            if 'UNREGISTERED' in str(e).upper() or 'INVALID' in str(e).upper():
+                logger.info(f'[FCM] Clearing invalid token for user {notification.recipient_id}')
+                notification.recipient.device_token = None
+                notification.recipient.save(update_fields=['device_token'])
+            
             return False
     
     @classmethod
     def retry_failed_pushes(cls) -> int:
-        """
-        Retry failed push notifications.
-        
-        Called by cron job to retry pushes that failed.
-        
-        Returns:
-            Number of successfully retried pushes
-        """
-        # Get notifications that failed but haven't exceeded max attempts
+        """Retry failed push notifications (batch of 100)."""
         failed = Notification.objects.filter(
             push_sent=False,
             push_attempts__lt=cls.MAX_PUSH_ATTEMPTS,
             push_attempts__gt=0
-        ).select_related('recipient')[:100]  # Batch limit
+        ).select_related('recipient')[:100]
         
         success_count = 0
         for notification in failed:
