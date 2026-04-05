@@ -126,13 +126,15 @@ class BroadcastIncidentService:
                 lat_decimal = None
                 lon_decimal = None
         
-        # Find nearest police station
+        # Find nearest police station (area-name match → GPS fallback)
         station = None
         if lat_decimal is not None and lon_decimal is not None:
             try:
                 station = JurisdictionService.find_nearest_station(
                     float(lat_decimal),
-                    float(lon_decimal)
+                    float(lon_decimal),
+                    area_name=area_name,
+                    city=city,
                 )
             except Exception:
                 pass

@@ -179,10 +179,11 @@ class PoliceStation(BaseModel):
     
     Used to:
     - Route incidents to nearest station based on GPS
+    - Route incidents to station based on area/zone mapping
     - Assign officers to stations
     - Filter cases by station
     
-    Routing uses haversine distance (no polygon boundaries).
+    Routing priority: area-name match → GPS haversine distance.
     """
     
     name = models.CharField(
@@ -194,7 +195,7 @@ class PoliceStation(BaseModel):
         max_length=50,
         unique=True,
         db_index=True,
-        help_text="Unique station code (e.g., PS-MH-MUM-001)"
+        help_text="Unique station code (e.g., PS-GJ-AHM-001)"
     )
     
     # GPS coordinates for nearest-station routing
@@ -229,6 +230,34 @@ class PoliceStation(BaseModel):
         help_text="State name"
     )
     
+    # Zone and jurisdiction
+    zone = models.CharField(
+        max_length=50,
+        blank=True,
+        default='',
+        db_index=True,
+        help_text="Police zone (e.g., Zone-1 East)"
+    )
+    
+    jurisdiction_areas = models.TextField(
+        blank=True,
+        default='',
+        help_text="Comma-separated area/locality names this station covers"
+    )
+    
+    address = models.TextField(
+        blank=True,
+        default='',
+        help_text="Full station address"
+    )
+    
+    phone = models.CharField(
+        max_length=20,
+        blank=True,
+        default='',
+        help_text="Station contact number"
+    )
+    
     # Status
     is_active = models.BooleanField(
         default=True,
@@ -245,7 +274,15 @@ class PoliceStation(BaseModel):
             models.Index(fields=['latitude', 'longitude'], name='station_coords_idx'),
             models.Index(fields=['state', 'district', 'city'], name='station_hierarchy_idx'),
             models.Index(fields=['is_active', 'state'], name='station_active_state_idx'),
+            models.Index(fields=['zone'], name='station_zone_idx'),
         ]
     
     def __str__(self):
-        return f"{self.name} ({self.code})"
+        zone_str = f" [{self.zone}]" if self.zone else ""
+        return f"{self.name} ({self.code}){zone_str}"
+    
+    def get_jurisdiction_area_list(self):
+        """Return jurisdiction_areas as a list of lowercase area names."""
+        if not self.jurisdiction_areas:
+            return []
+        return [a.strip().lower() for a in self.jurisdiction_areas.split(',') if a.strip()]
