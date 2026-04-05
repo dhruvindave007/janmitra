@@ -51,6 +51,7 @@ class IncidentAdmin(admin.ModelAdmin):
     list_filter = ['category', 'created_at']
     search_fields = ['id', 'text_content', 'submitted_by__identifier', 'area_name', 'city', 'state']
     ordering = ['-created_at']
+    list_select_related = ['submitted_by']
     
     # ALL fields read-only
     readonly_fields = [
@@ -134,6 +135,72 @@ class IncidentAdmin(admin.ModelAdmin):
 
 
 # =============================================================================
+# CASE ADMIN INLINES
+# =============================================================================
+
+class RecentMessagesInline(admin.TabularInline):
+    """Read-only inline showing last 5 investigation messages on a case."""
+    model = InvestigationMessage
+    fields = ['sender', 'sender_role', 'message_type', 'short_text_display', 'created_at']
+    readonly_fields = ['sender', 'sender_role', 'message_type', 'short_text_display', 'created_at']
+    extra = 0
+    max_num = 0
+    verbose_name = 'Recent Message'
+    verbose_name_plural = '💬 Recent Investigation Messages (last 5)'
+    show_change_link = True
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).filter(
+            is_deleted=False
+        ).select_related('sender').order_by('-created_at')[:5]
+
+    def short_text_display(self, obj):
+        text = obj.text_content or ''
+        return text[:80] + '…' if len(text) > 80 else text or '-'
+    short_text_display.short_description = 'Content'
+
+
+class CaseEscalationInline(admin.TabularInline):
+    """Read-only inline showing escalation history for a case."""
+    model = EscalationHistory
+    fields = ['event_type', 'level_display', 'escalation_type', 'escalated_by', 'reason_short', 'created_at']
+    readonly_fields = ['event_type', 'level_display', 'escalation_type', 'escalated_by', 'reason_short', 'created_at']
+    extra = 0
+    max_num = 0
+    verbose_name = 'Escalation'
+    verbose_name_plural = '🔺 Escalation History'
+    show_change_link = True
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).filter(
+            is_deleted=False
+        ).select_related('escalated_by', 'assigned_officer').order_by('-created_at')
+
+    def level_display(self, obj):
+        from_l = obj.from_level or '—'
+        to_l = obj.to_level or '—'
+        return f'{from_l} → {to_l}'
+    level_display.short_description = 'Level Change'
+
+    def reason_short(self, obj):
+        text = obj.reason or ''
+        return text[:60] + '…' if len(text) > 60 else text or '-'
+    reason_short.short_description = 'Reason'
+
+
+# =============================================================================
 # CASE ADMIN (READ-ONLY + ADMIN ACTIONS)
 # =============================================================================
 
@@ -166,6 +233,7 @@ class CaseAdmin(admin.ModelAdmin):
     date_hierarchy = 'created_at'
     list_per_page = 30
     list_select_related = ['incident', 'police_station', 'assigned_officer']
+    inlines = [RecentMessagesInline, CaseEscalationInline]
     
     # ALL fields read-only
     readonly_fields = [
@@ -499,6 +567,16 @@ class CaseAdmin(admin.ModelAdmin):
                 messages.WARNING
             )
     
+    # === Queryset optimization ===
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'incident', 'police_station', 'assigned_officer', 'assigned_by',
+            'solved_by', 'rejected_by',
+        ).prefetch_related(
+            'status_history', 'escalation_history',
+        )
+    
     # === Permissions ===
     
     def has_add_permission(self, request):
@@ -528,6 +606,7 @@ class CaseNoteAdmin(admin.ModelAdmin):
     list_filter = ['author_level', 'created_at']
     search_fields = ['case__id', 'author__identifier', 'note_text']
     ordering = ['-created_at']
+    list_select_related = ['case', 'author']
     
     readonly_fields = ['id', 'case', 'author', 'author_level', 'note_text', 'created_at', 'updated_at']
     
@@ -598,6 +677,7 @@ class CaseStatusHistoryAdmin(admin.ModelAdmin):
     search_fields = ['case__id', 'changed_by__identifier', 'reason']
     ordering = ['-created_at']
     date_hierarchy = 'created_at'
+    list_select_related = ['case', 'changed_by']
     
     readonly_fields = [
         'id', 'case', 'from_status', 'to_status', 'from_level', 'to_level',
@@ -749,6 +829,7 @@ class IncidentMediaAdmin(admin.ModelAdmin):
     list_filter = ['media_type', 'is_deleted', 'created_at']
     search_fields = ['id', 'incident__id', 'original_filename', 'uploaded_by__identifier']
     ordering = ['-created_at']
+    list_select_related = ['incident', 'uploaded_by']
     
     # ALL fields read-only
     readonly_fields = [
