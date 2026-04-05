@@ -31,6 +31,7 @@ class UserAdmin(BaseUserAdmin):
         'identifier', 'role_badge', 'designation_display', 'police_station',
         'status_badge', 'is_active', 'has_device_token', 'created_at',
     ]
+    list_editable = ['is_active']
     list_filter = ['role', 'status', 'is_active', 'police_station']
     search_fields = ['identifier', 'id']
     ordering = ['-created_at']
@@ -121,6 +122,11 @@ class UserAdmin(BaseUserAdmin):
         return bool(obj.device_token)
     has_device_token.boolean = True
     has_device_token.short_description = 'FCM'
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'police_station', 'authority_profile',
+        )
 
 
 # ── Keep registered but hidden from admin index ──────────────────────────────
