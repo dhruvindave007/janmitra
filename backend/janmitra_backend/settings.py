@@ -25,7 +25,7 @@ if SENTRY_DSN:
     sentry_sdk.init(
         dsn=SENTRY_DSN,
         traces_sample_rate=config('SENTRY_TRACES_RATE', default=0.1, cast=float),
-        profiles_sample_rate=config('SENTRY_PROFILES_RATE', default=0.1, cast=float),
+        profiles_sample_rate=config('SENTRY_PROFILES_RATE', default=0.05, cast=float),
         send_default_pii=False,
         environment=config('SENTRY_ENVIRONMENT', default='production'),
         release=config('SENTRY_RELEASE', default='janmitra-backend@1.0.0'),
@@ -294,7 +294,9 @@ if not DEBUG:
     # Content Security Policy for admin panel
     SECURE_CROSS_ORIGIN_OPENER_POLICY = 'same-origin'
 
-# Admin IP restriction (empty = unrestricted for dev; set IPs in production)
+# Admin IP restriction:
+#   DEBUG=True  → unrestricted (dev)
+#   DEBUG=False → BLOCKED unless IP is in ADMIN_ALLOWED_IPS
 ADMIN_ALLOWED_IPS = config('ADMIN_ALLOWED_IPS', default='', cast=Csv()) if config('ADMIN_ALLOWED_IPS', default='') else []
 
 # =============================================================================

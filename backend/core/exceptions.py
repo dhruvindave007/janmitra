@@ -116,18 +116,37 @@ def _get_safe_message(exc, status_code):
 
 
 def _log_security_event(exc, request, view, status_code):
-    """Log security-relevant events for monitoring and alerting."""
+    """Log security-relevant events and tag in Sentry for searchability."""
     user_info = 'anonymous'
     if request and hasattr(request, 'user') and request.user.is_authenticated:
         user_info = str(request.user.id)
     
     ip_address = _get_client_ip(request) if request else 'unknown'
     view_name = view.__class__.__name__ if view else 'unknown'
+    exc_name = exc.__class__.__name__
+    
+    # Map status codes to searchable Sentry tags
+    security_tags = {
+        401: 'invalid_token',
+        403: 'permission_denied',
+        429: 'rate_limit_hit',
+    }
+    tag = security_tags.get(status_code, 'security_event')
+    
+    # Detect specific exception types for finer tags
+    if 'DeviceBinding' in exc_name or 'fingerprint' in str(exc).lower():
+        tag = 'fingerprint_mismatch'
+    
+    sentry_sdk.set_tag('security_event', tag)
+    sentry_sdk.capture_message(
+        f"Security: {tag} status={status_code} view={view_name}",
+        level='warning',
+    )
     
     security_logger.warning(
-        f"Security event: status={status_code}, "
+        f"Security event: type={tag}, status={status_code}, "
         f"user={user_info}, ip={ip_address}, "
-        f"view={view_name}, exception={exc.__class__.__name__}"
+        f"view={view_name}, exception={exc_name}"
     )
 
 

@@ -3,8 +3,8 @@ Audit logging middleware for JanMitra Backend.
 
 Provides:
 - Request ID generation and propagation (X-Request-ID)
-- Structured request/response logging
-- Admin IP restriction (production only)
+- Structured request/response logging with slow-request detection
+- Admin IP restriction (blocks by default in production)
 """
 
 import json
@@ -16,8 +16,13 @@ from django.conf import settings
 from django.http import HttpResponseForbidden
 from django.utils import timezone
 
+import sentry_sdk
+
 audit_logger = logging.getLogger('janmitra.audit')
 security_logger = logging.getLogger('janmitra.security')
+
+# Threshold for slow request warnings (seconds)
+SLOW_REQUEST_THRESHOLD = 1.0
 
 
 class RequestIDMiddleware:
@@ -26,7 +31,7 @@ class RequestIDMiddleware:
     
     - Attaches to request object as `request.request_id`
     - Adds X-Request-ID response header for client tracing
-    - Respects incoming X-Request-ID from load balancer/proxy
+    - Respects incoming X-Request-ID from mobile client or load balancer
     """
     
     def __init__(self, get_response):
@@ -43,15 +48,12 @@ class RequestIDMiddleware:
 
 class AuditLoggingMiddleware:
     """
-    Middleware to log all API requests for audit purposes.
+    Structured request/response logging.
     
-    Captures:
-    - Request ID (from RequestIDMiddleware)
-    - Request method and path
-    - User information (ID + role)
-    - Response status code
-    - Request duration in milliseconds
-    - Client IP address
+    Captures: request_id, method, path, user_id, role, status_code,
+    duration_ms, IP. Warns on slow requests (>1s).
+    
+    NEVER logs: request body, Authorization header, tokens, passwords.
     """
     
     def __init__(self, get_response):
@@ -80,13 +82,15 @@ class AuditLoggingMiddleware:
         return any(path.startswith(prefix) for prefix in skip_prefixes)
     
     def _log_request(self, request, response, duration):
-        """Log structured request data as JSON."""
+        """Log structured request data as JSON. No sensitive data."""
         user_id = 'anonymous'
         user_role = 'none'
         
         if hasattr(request, 'user') and request.user.is_authenticated:
             user_id = str(request.user.id)
             user_role = getattr(request.user, 'role', 'unknown')
+        
+        duration_ms = round(duration * 1000, 2)
         
         log_data = {
             'request_id': getattr(request, 'request_id', '-'),
@@ -96,14 +100,19 @@ class AuditLoggingMiddleware:
             'user_id': user_id,
             'user_role': user_role,
             'status_code': response.status_code,
-            'duration_ms': round(duration * 1000, 2),
+            'duration_ms': duration_ms,
             'ip_address': self._get_client_ip(request),
-            'user_agent': request.META.get('HTTP_USER_AGENT', '')[:200],
         }
         
         log_line = json.dumps(log_data, default=str)
         
-        if response.status_code >= 500:
+        # Slow request detection
+        if duration >= SLOW_REQUEST_THRESHOLD:
+            audit_logger.warning(
+                f"SLOW_REQUEST duration={duration_ms}ms {log_line}"
+            )
+            sentry_sdk.set_tag('slow_request', True)
+        elif response.status_code >= 500:
             audit_logger.error(log_line)
         elif response.status_code >= 400:
             audit_logger.warning(log_line)
@@ -120,10 +129,13 @@ class AuditLoggingMiddleware:
 
 class AdminIPRestrictionMiddleware:
     """
-    Restricts Django admin access to allowed IP addresses in production.
+    Restricts Django admin access by IP address.
     
-    Configure via settings.ADMIN_ALLOWED_IPS (list of IPs).
-    If not set or empty, admin is unrestricted (dev mode).
+    Behavior:
+    - DEBUG=True  → admin unrestricted (development)
+    - DEBUG=False → admin BLOCKED unless client IP is in ADMIN_ALLOWED_IPS
+    
+    Configure ADMIN_ALLOWED_IPS in .env as comma-separated IPs.
     """
     
     def __init__(self, get_response):
@@ -131,12 +143,18 @@ class AdminIPRestrictionMiddleware:
     
     def __call__(self, request):
         if request.path.startswith('/admin/'):
-            allowed_ips = getattr(settings, 'ADMIN_ALLOWED_IPS', [])
-            if allowed_ips:
+            # In production (DEBUG=False), block by default
+            if not getattr(settings, 'DEBUG', False):
+                allowed_ips = getattr(settings, 'ADMIN_ALLOWED_IPS', [])
                 client_ip = self._get_client_ip(request)
-                if client_ip not in allowed_ips:
+                
+                if not allowed_ips or client_ip not in allowed_ips:
                     security_logger.warning(
-                        f"Admin access denied: ip={client_ip} path={request.path}"
+                        f"Admin access BLOCKED: ip={client_ip} path={request.path}"
+                    )
+                    sentry_sdk.capture_message(
+                        f"Admin access blocked from {client_ip}",
+                        level='warning',
                     )
                     return HttpResponseForbidden('Forbidden')
         
