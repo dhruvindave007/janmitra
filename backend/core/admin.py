@@ -41,6 +41,7 @@ class PoliceStationAdmin(admin.ModelAdmin):
     list_display = [
         'name',
         'code',
+        'zone',
         'city',
         'district',
         'state',
@@ -50,9 +51,9 @@ class PoliceStationAdmin(admin.ModelAdmin):
         'active_officer_count_display',
         'case_count_display',
     ]
-    list_filter = ['is_active', 'city', 'district', 'state']
-    search_fields = ['name', 'code', 'city', 'district']
-    ordering = ['state', 'district', 'city', 'name']
+    list_filter = ['is_active', 'zone', 'city', 'district', 'state']
+    search_fields = ['name', 'code', 'city', 'district', 'zone', 'jurisdiction_areas']
+    ordering = ['zone', 'name']
     list_per_page = 30
     inlines = [StationOfficerInline]
 
@@ -62,8 +63,11 @@ class PoliceStationAdmin(admin.ModelAdmin):
         (None, {
             'fields': ('name', 'code', 'is_active'),
         }),
+        ('Zone & Jurisdiction', {
+            'fields': ('zone', 'jurisdiction_areas'),
+        }),
         ('Location', {
-            'fields': ('latitude', 'longitude', 'city', 'district', 'state'),
+            'fields': ('latitude', 'longitude', 'city', 'district', 'state', 'address', 'phone'),
         }),
         ('Metadata', {
             'fields': ('id', 'created_at', 'updated_at'),
