@@ -10,29 +10,65 @@ from .models import User, JanMitraProfile, AuthorityProfile, DeviceSession, Invi
 
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
-    """Custom admin for User model."""
+    """Custom admin for User model with station assignment and designation."""
     
-    list_display = ['identifier', 'role', 'status', 'is_active', 'is_staff', 'created_at']
-    list_filter = ['role', 'status', 'is_active', 'is_staff', 'created_at']
+    list_display = [
+        'identifier', 'role', 'designation_display', 'police_station',
+        'status', 'is_active', 'has_device_token', 'created_at',
+    ]
+    list_filter = ['role', 'status', 'is_active', 'is_staff', 'police_station', 'created_at']
     search_fields = ['identifier', 'id']
     ordering = ['-created_at']
     readonly_fields = ['id', 'created_at', 'updated_at', 'last_login', 'password_changed_at']
+    filter_horizontal = ['assigned_stations', 'groups', 'user_permissions']
+    list_per_page = 30
+    list_select_related = ['police_station']
     
     fieldsets = (
         (None, {'fields': ('identifier', 'password')}),
         ('Role & Status', {'fields': ('role', 'status', 'is_anonymous')}),
+        ('Station Assignment', {
+            'fields': ('police_station', 'assigned_stations'),
+            'description': 'police_station: Home station (L0–L2). assigned_stations: Regional stations (L3).',
+        }),
+        ('Device', {
+            'fields': ('device_token',),
+            'classes': ('collapse',),
+        }),
         ('Permissions', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions')}),
-        ('Security', {'fields': ('last_login', 'last_login_ip', 'failed_login_attempts', 'password_changed_at')}),
-        ('Revocation', {'fields': ('revoked_at', 'revoked_by', 'revocation_reason')}),
-        ('Timestamps', {'fields': ('id', 'created_at', 'updated_at')}),
+        ('Security', {
+            'fields': ('last_login', 'last_login_ip', 'failed_login_attempts', 'password_changed_at'),
+            'classes': ('collapse',),
+        }),
+        ('Revocation', {
+            'fields': ('revoked_at', 'revoked_by', 'revocation_reason'),
+            'classes': ('collapse',),
+        }),
+        ('Timestamps', {
+            'fields': ('id', 'created_at', 'updated_at'),
+            'classes': ('collapse',),
+        }),
     )
     
     add_fieldsets = (
         (None, {
             'classes': ('wide',),
-            'fields': ('identifier', 'password1', 'password2', 'role', 'status'),
+            'fields': ('identifier', 'password1', 'password2', 'role', 'status', 'police_station'),
         }),
     )
+
+    def designation_display(self, obj):
+        """Show designation from AuthorityProfile if it exists."""
+        try:
+            return obj.authority_profile.designation or '-'
+        except AuthorityProfile.DoesNotExist:
+            return '-'
+    designation_display.short_description = 'Designation'
+
+    def has_device_token(self, obj):
+        return bool(obj.device_token)
+    has_device_token.boolean = True
+    has_device_token.short_description = 'FCM'
 
 
 @admin.register(JanMitraProfile)

@@ -20,7 +20,7 @@ from datetime import timedelta
 from .models import (
     Report, ReportStatusHistory, ReportNote,
     Incident, Case, CaseNote, CaseStatusHistory, CaseStatus, CaseLevel,
-    IncidentMedia,
+    IncidentMedia, InvestigationMessage, EscalationHistory,
 )
 from audit.models import AuditLog, AuditEventType
 from notifications.services import NotificationService
@@ -152,21 +152,24 @@ class CaseAdmin(admin.ModelAdmin):
     list_display = [
         'short_id',
         'incident_preview',
+        'station_name',
         'status_badge',
         'level_badge',
+        'assigned_officer_display',
         'sla_deadline',
         'sla_status_badge',
         'escalation_count',
         'created_at',
     ]
-    list_filter = ['status', 'current_level', 'created_at']
-    search_fields = ['id', 'incident__id', 'incident__text_content']
+    list_filter = ['status', 'current_level', 'police_station', 'created_at']
+    search_fields = ['id', 'incident__id', 'incident__text_content', 'police_station__name', 'assigned_officer__identifier']
     ordering = ['-created_at']
     date_hierarchy = 'created_at'
     
     # ALL fields read-only
     readonly_fields = [
         'id', 'incident', 'incident_link', 'incident_text_display',
+        'police_station', 'assigned_officer', 'assigned_by',
         'status', 'current_level', 
         'sla_deadline', 'is_sla_breached_display',
         'escalation_count', 'last_escalated_at',
@@ -178,6 +181,9 @@ class CaseAdmin(admin.ModelAdmin):
     fieldsets = (
         ('Case Identification', {
             'fields': ('id', 'incident_link', 'incident_text_display'),
+        }),
+        ('Assignment', {
+            'fields': ('police_station', 'assigned_officer', 'assigned_by'),
         }),
         ('Current Status', {
             'fields': ('status', 'current_level'),
@@ -291,6 +297,18 @@ class CaseAdmin(admin.ModelAdmin):
             return obj.incident.text_content
         return '-'
     incident_text_display.short_description = 'Incident Text'
+    
+    def station_name(self, obj):
+        """Display police station name."""
+        return obj.police_station.name if obj.police_station else '-'
+    station_name.short_description = 'Station'
+    station_name.admin_order_field = 'police_station__name'
+    
+    def assigned_officer_display(self, obj):
+        """Display assigned officer identifier."""
+        return obj.assigned_officer.identifier if obj.assigned_officer else '-'
+    assigned_officer_display.short_description = 'Officer'
+    assigned_officer_display.admin_order_field = 'assigned_officer__identifier'
     
     # === Admin Actions ===
     
@@ -833,6 +851,187 @@ class IncidentMediaAdmin(admin.ModelAdmin):
     def has_change_permission(self, request, obj=None):
         # Allow viewing but not editing
         return True
+    
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+# =============================================================================
+# INVESTIGATION MESSAGE ADMIN (READ-ONLY)
+# =============================================================================
+
+@admin.register(InvestigationMessage)
+class InvestigationMessageAdmin(admin.ModelAdmin):
+    """
+    Admin for InvestigationMessage model.
+    
+    STRICTLY READ-ONLY: Messages are immutable after creation.
+    """
+    
+    list_display = [
+        'short_id',
+        'case_link',
+        'sender_display',
+        'sender_role',
+        'message_type_badge',
+        'short_text',
+        'created_at',
+    ]
+    list_filter = ['sender_role', 'message_type', 'created_at']
+    search_fields = ['case__id', 'sender__identifier', 'text_content']
+    ordering = ['-created_at']
+    list_per_page = 50
+    list_select_related = ['case', 'sender']
+    
+    readonly_fields = [
+        'id', 'case', 'sender', 'sender_role', 'message_type',
+        'text_content', 'file', 'created_at', 'updated_at',
+    ]
+    
+    fieldsets = (
+        ('Message', {
+            'fields': ('id', 'case', 'sender', 'sender_role', 'message_type'),
+        }),
+        ('Content', {
+            'fields': ('text_content', 'file'),
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',),
+        }),
+    )
+    
+    def short_id(self, obj):
+        return str(obj.id)[:8] + '...'
+    short_id.short_description = 'ID'
+    
+    def case_link(self, obj):
+        from django.urls import reverse
+        url = reverse('admin:reports_case_change', args=[obj.case_id])
+        return format_html('<a href="{}">{}</a>', url, str(obj.case_id)[:8] + '...')
+    case_link.short_description = 'Case'
+    
+    def sender_display(self, obj):
+        return obj.sender.identifier if obj.sender else 'SYSTEM'
+    sender_display.short_description = 'Sender'
+    
+    def message_type_badge(self, obj):
+        colors = {'text': '#3498db', 'media': '#e67e22', 'system': '#7f8c8d'}
+        color = colors.get(obj.message_type, '#95a5a6')
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 2px 6px; '
+            'border-radius: 3px; font-size: 11px;">{}</span>',
+            color, obj.message_type.upper()
+        )
+    message_type_badge.short_description = 'Type'
+    
+    def short_text(self, obj):
+        text = obj.text_content or ''
+        return text[:50] + '...' if len(text) > 50 else text or '-'
+    short_text.short_description = 'Content'
+    
+    def has_add_permission(self, request):
+        return False
+    
+    def has_change_permission(self, request, obj=None):
+        return True  # View only
+    
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+# =============================================================================
+# ESCALATION HISTORY ADMIN (READ-ONLY)
+# =============================================================================
+
+@admin.register(EscalationHistory)
+class EscalationHistoryAdmin(admin.ModelAdmin):
+    """
+    Admin for EscalationHistory model.
+    
+    STRICTLY READ-ONLY: Escalation records are immutable audit entries.
+    """
+    
+    list_display = [
+        'short_id',
+        'case_link',
+        'event_type_badge',
+        'level_transition',
+        'escalation_type',
+        'escalated_by_display',
+        'assigned_officer_display',
+        'created_at',
+    ]
+    list_filter = ['event_type', 'escalation_type', 'created_at']
+    search_fields = ['case__id', 'escalated_by__identifier', 'assigned_officer__identifier', 'reason']
+    ordering = ['-created_at']
+    list_per_page = 50
+    list_select_related = ['case', 'escalated_by', 'assigned_officer']
+    
+    readonly_fields = [
+        'id', 'case', 'event_type', 'from_level', 'to_level',
+        'escalation_type', 'escalated_by', 'assigned_officer',
+        'reason', 'created_at', 'updated_at',
+    ]
+    
+    fieldsets = (
+        ('Event', {
+            'fields': ('id', 'case', 'event_type', 'escalation_type'),
+        }),
+        ('Level Change', {
+            'fields': ('from_level', 'to_level'),
+        }),
+        ('People', {
+            'fields': ('escalated_by', 'assigned_officer'),
+        }),
+        ('Details', {
+            'fields': ('reason',),
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',),
+        }),
+    )
+    
+    def short_id(self, obj):
+        return str(obj.id)[:8] + '...'
+    short_id.short_description = 'ID'
+    
+    def case_link(self, obj):
+        from django.urls import reverse
+        url = reverse('admin:reports_case_change', args=[obj.case_id])
+        return format_html('<a href="{}">{}</a>', url, str(obj.case_id)[:8] + '...')
+    case_link.short_description = 'Case'
+    
+    def event_type_badge(self, obj):
+        colors = {'escalation': '#e74c3c', 'assignment': '#3498db'}
+        color = colors.get(obj.event_type, '#95a5a6')
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 2px 6px; '
+            'border-radius: 3px; font-size: 11px;">{}</span>',
+            color, obj.event_type.upper()
+        )
+    event_type_badge.short_description = 'Event'
+    
+    def level_transition(self, obj):
+        if obj.from_level and obj.to_level:
+            return f'{obj.from_level} → {obj.to_level}'
+        return '-'
+    level_transition.short_description = 'Level Change'
+    
+    def escalated_by_display(self, obj):
+        return obj.escalated_by.identifier if obj.escalated_by else 'AUTO'
+    escalated_by_display.short_description = 'By'
+    
+    def assigned_officer_display(self, obj):
+        return obj.assigned_officer.identifier if obj.assigned_officer else '-'
+    assigned_officer_display.short_description = 'Assigned To'
+    
+    def has_add_permission(self, request):
+        return False
+    
+    def has_change_permission(self, request, obj=None):
+        return True  # View only
     
     def has_delete_permission(self, request, obj=None):
         return False
