@@ -3,9 +3,12 @@ Custom exception handling for JanMitra Backend.
 
 Provides consistent error response format and security-aware error handling.
 Never exposes sensitive information in error responses.
+Integrates with Sentry for error tracking when configured.
 """
 
 import logging
+
+import sentry_sdk
 from rest_framework.views import exception_handler
 from rest_framework.response import Response
 from rest_framework import status
@@ -20,26 +23,27 @@ def custom_exception_handler(exc, context):
     1. Provides consistent error response format
     2. Logs security-relevant exceptions
     3. Sanitizes error messages to prevent information leakage
-    
-    Response format:
-    {
-        "success": false,
-        "error": {
-            "code": "ERROR_CODE",
-            "message": "User-friendly message",
-            "details": {} (optional, only in debug mode)
-        }
-    }
+    4. Sets Sentry user context for error tracking
     """
     # Call REST framework's default exception handler first
     response = exception_handler(exc, context)
     
+    # Set Sentry user context for all errors
+    request = context.get('request')
+    if request and hasattr(request, 'user') and request.user.is_authenticated:
+        sentry_sdk.set_user({
+            'id': str(request.user.id),
+            'username': getattr(request.user, 'identifier', str(request.user)),
+            'role': getattr(request.user, 'role', 'unknown'),
+        })
+    
+    # Add request_id to Sentry scope
+    if request and hasattr(request, 'request_id'):
+        sentry_sdk.set_tag('request_id', request.request_id)
+    
     if response is not None:
-        # Get request info for logging
-        request = context.get('request')
         view = context.get('view')
         
-        # Prepare custom response
         custom_response = {
             'success': False,
             'error': {
@@ -47,6 +51,10 @@ def custom_exception_handler(exc, context):
                 'message': _get_safe_message(exc, response.status_code),
             }
         }
+        
+        # Include request_id in error response for client tracing
+        if request and hasattr(request, 'request_id'):
+            custom_response['error']['request_id'] = request.request_id
         
         # Log security-relevant exceptions
         if response.status_code in [401, 403, 429]:

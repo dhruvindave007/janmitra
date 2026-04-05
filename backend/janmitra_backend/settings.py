@@ -9,10 +9,27 @@ import os
 from datetime import timedelta
 from pathlib import Path
 
+import sentry_sdk
 from decouple import config, Csv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# =============================================================================
+# SENTRY ERROR TRACKING
+# =============================================================================
+
+SENTRY_DSN = config('SENTRY_DSN', default='')
+
+if SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        traces_sample_rate=config('SENTRY_TRACES_RATE', default=0.1, cast=float),
+        profiles_sample_rate=config('SENTRY_PROFILES_RATE', default=0.1, cast=float),
+        send_default_pii=False,
+        environment=config('SENTRY_ENVIRONMENT', default='production'),
+        release=config('SENTRY_RELEASE', default='janmitra-backend@1.0.0'),
+    )
 
 # =============================================================================
 # SECURITY SETTINGS
@@ -62,6 +79,8 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    # Request ID must be first custom middleware for tracing
+    'audit.middleware.RequestIDMiddleware',
     'corsheaders.middleware.CorsMiddleware',  # CORS must be before CommonMiddleware
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -69,7 +88,9 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    # Custom middleware for audit logging
+    # Admin IP restriction (production only, configure ADMIN_ALLOWED_IPS)
+    'audit.middleware.AdminIPRestrictionMiddleware',
+    # Audit logging (last — captures final status code)
     'audit.middleware.AuditLoggingMiddleware',
 ]
 
@@ -270,6 +291,11 @@ if not DEBUG:
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
     SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
+    # Content Security Policy for admin panel
+    SECURE_CROSS_ORIGIN_OPENER_POLICY = 'same-origin'
+
+# Admin IP restriction (empty = unrestricted for dev; set IPs in production)
+ADMIN_ALLOWED_IPS = config('ADMIN_ALLOWED_IPS', default='', cast=Csv()) if config('ADMIN_ALLOWED_IPS', default='') else []
 
 # =============================================================================
 # CELERY CONFIGURATION
@@ -303,7 +329,12 @@ LOGGING = {
     'disable_existing_loggers': False,
     'formatters': {
         'verbose': {
-            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
+            'format': '{levelname} {asctime} [{module}] [rid:{request_id}] {message}',
+            'style': '{',
+            'defaults': {'request_id': '-'},
+        },
+        'json': {
+            'format': '{message}',
             'style': '{',
         },
         'security': {
@@ -336,7 +367,7 @@ LOGGING = {
             'filename': BASE_DIR / 'logs' / 'audit.log',
             'maxBytes': 50 * 1024 * 1024,  # 50 MB
             'backupCount': 50,
-            'formatter': 'verbose',
+            'formatter': 'json',
         },
     },
     'loggers': {
