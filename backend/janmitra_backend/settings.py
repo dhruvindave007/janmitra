@@ -35,8 +35,8 @@ if DEBUG:
 # =============================================================================
 
 INSTALLED_APPS = [
-    # Django core apps
-    'django.contrib.admin',
+    # Django core apps (custom admin site)
+    'janmitra_backend.admin_site.JanMitraAdminConfig',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',

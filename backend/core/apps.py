@@ -5,6 +5,7 @@ from django.conf import settings
 
 class CoreConfig(AppConfig):
     name = 'core'
+    verbose_name = '🏢 Police Infrastructure'
 
     def ready(self):
         logger = logging.getLogger(__name__)

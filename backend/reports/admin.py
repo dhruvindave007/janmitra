@@ -150,14 +150,13 @@ class CaseAdmin(admin.ModelAdmin):
     """
     
     list_display = [
-        'short_id',
+        'case_number',
         'incident_preview',
         'station_name',
         'status_badge',
         'level_badge',
         'assigned_officer_display',
-        'sla_deadline',
-        'sla_status_badge',
+        'sla_indicator',
         'escalation_count',
         'created_at',
     ]
@@ -165,6 +164,8 @@ class CaseAdmin(admin.ModelAdmin):
     search_fields = ['id', 'incident__id', 'incident__text_content', 'police_station__name', 'assigned_officer__identifier']
     ordering = ['-created_at']
     date_hierarchy = 'created_at'
+    list_per_page = 30
+    list_select_related = ['incident', 'police_station', 'assigned_officer']
     
     # ALL fields read-only
     readonly_fields = [
@@ -191,11 +192,11 @@ class CaseAdmin(admin.ModelAdmin):
         ('SLA Tracking', {
             'fields': ('sla_deadline', 'is_sla_breached_display', 'escalation_count', 'last_escalated_at'),
         }),
-        ('Resolution (if solved)', {
+        ('Resolution', {
             'fields': ('solved_at', 'solved_by', 'solution_notes'),
             'classes': ('collapse',),
         }),
-        ('Rejection (if rejected)', {
+        ('Rejection', {
             'fields': ('rejected_at', 'rejected_by', 'rejection_reason'),
             'classes': ('collapse',),
         }),
@@ -210,10 +211,11 @@ class CaseAdmin(admin.ModelAdmin):
     
     # === Display helpers ===
     
-    def short_id(self, obj):
-        return str(obj.id)[:8] + '...'
-    short_id.short_description = 'Case ID'
-    short_id.admin_order_field = 'id'
+    def case_number(self, obj):
+        """Show case ID as compact reference number."""
+        return f'#{str(obj.id)[:8]}'
+    case_number.short_description = 'Case #'
+    case_number.admin_order_field = 'id'
     
     def incident_preview(self, obj):
         """Show truncated incident text."""
@@ -224,18 +226,22 @@ class CaseAdmin(admin.ModelAdmin):
     incident_preview.short_description = 'Incident'
     
     def status_badge(self, obj):
-        """Color-coded status badge."""
+        """Color-coded status badge with all case statuses."""
         colors = {
-            CaseStatus.OPEN: '#3498db',      # Blue
-            CaseStatus.SOLVED: '#27ae60',    # Green
-            CaseStatus.REJECTED: '#e74c3c',  # Red
-            CaseStatus.CLOSED: '#7f8c8d',    # Gray
+            'new': '#3498db',          # Blue
+            'assigned': '#2980b9',     # Dark Blue
+            'in_progress': '#f39c12',  # Yellow
+            'escalated': '#e67e22',    # Orange
+            'solved': '#27ae60',       # Green
+            'rejected': '#e74c3c',     # Red
+            'closed': '#7f8c8d',       # Gray
+            'resolved': '#2ecc71',     # Light Green
         }
         color = colors.get(obj.status, '#95a5a6')
         return format_html(
-            '<span style="background-color: {}; color: white; padding: 3px 8px; '
-            'border-radius: 3px; font-size: 11px;">{}</span>',
-            color, obj.get_status_display()
+            '<span style="background:{}; color:#fff; padding:2px 8px; '
+            'border-radius:3px; font-size:11px; font-weight:600;">{}</span>',
+            color, obj.get_status_display().upper()
         )
     status_badge.short_description = 'Status'
     status_badge.admin_order_field = 'status'
@@ -256,29 +262,35 @@ class CaseAdmin(admin.ModelAdmin):
     level_badge.short_description = 'Level'
     level_badge.admin_order_field = 'current_level'
     
-    def sla_status_badge(self, obj):
-        """SLA breach indicator."""
-        is_breached = timezone.now() > obj.sla_deadline and obj.status == CaseStatus.OPEN
-        if is_breached:
+    def sla_indicator(self, obj):
+        """Compact SLA status: time remaining or breach indicator."""
+        terminal = {'solved', 'closed', 'rejected', 'resolved'}
+        if obj.status in terminal:
+            return format_html('<span style="color:#7f8c8d;">—</span>')
+        
+        now = timezone.now()
+        if now > obj.sla_deadline:
+            hours_over = (now - obj.sla_deadline).total_seconds() / 3600
             return format_html(
-                '<span style="background-color: #e74c3c; color: white; padding: 3px 8px; '
-                'border-radius: 3px; font-size: 11px;">⚠ BREACHED</span>'
+                '<span style="background:#e74c3c; color:#fff; padding:2px 6px; '
+                'border-radius:3px; font-size:11px;">⚠ +{:.0f}h</span>', hours_over
             )
-        elif obj.status != CaseStatus.OPEN:
-            return format_html(
-                '<span style="color: #7f8c8d; font-size: 11px;">N/A</span>'
-            )
+        
+        hours_left = (obj.sla_deadline - now).total_seconds() / 3600
+        if hours_left < 6:
+            color = '#e67e22'  # Orange — nearing
         else:
-            return format_html(
-                '<span style="background-color: #27ae60; color: white; padding: 3px 8px; '
-                'border-radius: 3px; font-size: 11px;">✓ OK</span>'
-            )
-    sla_status_badge.short_description = 'SLA'
+            color = '#27ae60'  # Green — OK
+        return format_html(
+            '<span style="color:{}; font-weight:600; font-size:11px;">{:.0f}h left</span>',
+            color, hours_left
+        )
+    sla_indicator.short_description = 'SLA'
     
     def is_sla_breached_display(self, obj):
         """Display SLA breach status in detail view."""
-        is_breached = timezone.now() > obj.sla_deadline and obj.status == CaseStatus.OPEN
-        return is_breached
+        terminal = {'solved', 'closed', 'rejected', 'resolved'}
+        return timezone.now() > obj.sla_deadline and obj.status not in terminal
     is_sla_breached_display.boolean = True
     is_sla_breached_display.short_description = 'SLA Breached?'
     
@@ -315,36 +327,38 @@ class CaseAdmin(admin.ModelAdmin):
     @admin.action(description="🔺 Force Escalate to Next Level")
     def force_escalate_case(self, request, queryset):
         """
-        Force escalate selected cases to the next level.
-        
-        - Moves case to next lower level number (2 -> 1 -> 0)
-        - Resets SLA deadline
-        - Creates CaseStatusHistory
-        - Logs to AuditLog
+        Force escalate selected cases to the next higher level.
+        current_level is monotonic — only increases (L1→L2→L3→L4).
         """
+        LEVEL_ORDER = ['L0', 'L1', 'L2', 'L3', 'L4']
+        terminal = {'solved', 'closed', 'rejected', 'resolved'}
         escalated_count = 0
         skipped_count = 0
         
         for case in queryset:
-            # Skip if not open
-            if case.status != CaseStatus.OPEN:
+            if case.status in terminal:
                 skipped_count += 1
                 continue
             
-            # Skip if already at highest level (0)
-            if case.current_level == CaseLevel.LEVEL_0:
+            try:
+                idx = LEVEL_ORDER.index(case.current_level)
+            except ValueError:
                 skipped_count += 1
                 continue
             
-            # Store previous state for audit
+            if idx >= len(LEVEL_ORDER) - 1:  # Already L4
+                skipped_count += 1
+                continue
+            
             prev_level = case.current_level
             prev_status = case.status
             
-            # Escalate
-            case.current_level = case.current_level - 1
+            # Escalate — monotonic increase
+            case.current_level = LEVEL_ORDER[idx + 1]
+            case.status = CaseStatus.ESCALATED
             case.escalation_count += 1
             case.last_escalated_at = timezone.now()
-            case.sla_deadline = timezone.now() + timedelta(hours=24)  # Reset SLA
+            case.sla_deadline = timezone.now() + timedelta(hours=48)
             case.save()
             
             # Create status history
@@ -399,7 +413,7 @@ class CaseAdmin(admin.ModelAdmin):
         if skipped_count > 0:
             self.message_user(
                 request,
-                f"Skipped {skipped_count} case(s) (not open or already at Level 0).",
+                f"Skipped {skipped_count} case(s) (terminal state or already at L4).",
                 messages.WARNING
             )
     
@@ -418,7 +432,8 @@ class CaseAdmin(admin.ModelAdmin):
         
         for case in queryset:
             # Skip if already terminal
-            if case.status in [CaseStatus.SOLVED, CaseStatus.REJECTED, CaseStatus.CLOSED]:
+            terminal = {'solved', 'closed', 'rejected', 'resolved'}
+            if case.status in terminal:
                 skipped_count += 1
                 continue
             
