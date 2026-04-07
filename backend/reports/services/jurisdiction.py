@@ -1,23 +1,19 @@
 """
-JurisdictionService: Police station routing.
+JurisdictionService: GPS-based police station routing.
 
-Routing priority:
-1. Area-name match (exact locality → predefined station mapping)
-2. GPS haversine distance (fallback)
+Finds nearest police station using haversine distance formula.
+Pure deterministic logic, no AI/ML involved.
 
 Usage:
     from reports.services import JurisdictionService
     
-    # Find station by area name + GPS (preferred)
-    station = JurisdictionService.find_nearest_station(
-        lat, lon, area_name="Navrangpura", city="Ahmedabad"
-    )
-    
-    # Find nearest station by GPS only
+    # Find nearest station to incident location
     station = JurisdictionService.find_nearest_station(lat, lon)
+    
+    # Find nearest station in a specific state
+    station = JurisdictionService.find_nearest_station(lat, lon, state='Maharashtra')
 """
 
-import logging
 import math
 from decimal import Decimal
 from typing import Optional, Tuple
@@ -26,21 +22,21 @@ from django.db.models import QuerySet
 
 from core.models import PoliceStation
 
-logger = logging.getLogger('janmitra.jurisdiction')
-
 
 class JurisdictionService:
     """
-    Service for police station routing.
+    Service for GPS-based police station routing.
     
-    Priority:
-    1. Area-name match via AhmedabadZoneService (for known Ahmedabad areas)
-    2. Haversine GPS distance (universal fallback)
+    Uses haversine formula to calculate great-circle distance
+    between two GPS coordinates on Earth's surface.
     
     All distances are in kilometers.
     """
     
+    # Earth's radius in kilometers
     EARTH_RADIUS_KM = 6371.0
+    
+    # Maximum reasonable distance for routing (500km - beyond this, something is wrong)
     MAX_ROUTING_DISTANCE_KM = 500.0
     
     @classmethod
@@ -64,15 +60,28 @@ class JurisdictionService:
         c = 2 ⋅ atan2( √a, √(1−a) )
         d = R ⋅ c
         
-        Returns: Distance in kilometers
+        Args:
+            lat1: Latitude of point 1 (degrees)
+            lon1: Longitude of point 1 (degrees)
+            lat2: Latitude of point 2 (degrees)
+            lon2: Longitude of point 2 (degrees)
+            
+        Returns:
+            Distance in kilometers
         """
-        lat1, lon1, lat2, lon2 = float(lat1), float(lon1), float(lat2), float(lon2)
+        # Convert all coordinates to float (handle Decimal)
+        lat1 = float(lat1)
+        lon1 = float(lon1)
+        lat2 = float(lat2)
+        lon2 = float(lon2)
         
+        # Convert to radians
         phi1 = cls._to_radians(lat1)
         phi2 = cls._to_radians(lat2)
         delta_phi = cls._to_radians(lat2 - lat1)
         delta_lambda = cls._to_radians(lon2 - lon1)
         
+        # Haversine formula
         a = (
             math.sin(delta_phi / 2) ** 2 +
             math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2) ** 2
@@ -88,7 +97,17 @@ class JurisdictionService:
         district: Optional[str] = None,
         city: Optional[str] = None
     ) -> QuerySet:
-        """Get queryset of active police stations, optionally filtered."""
+        """
+        Get queryset of active police stations, optionally filtered.
+        
+        Args:
+            state: Filter by state name (optional)
+            district: Filter by district name (optional)
+            city: Filter by city name (optional)
+            
+        Returns:
+            QuerySet of active PoliceStation objects
+        """
         qs = PoliceStation.objects.filter(is_active=True, is_deleted=False)
         
         if state:
@@ -108,94 +127,32 @@ class JurisdictionService:
         state: Optional[str] = None,
         district: Optional[str] = None,
         city: Optional[str] = None,
-        max_distance_km: Optional[float] = None,
-        area_name: Optional[str] = None,
-        sub_locality: Optional[str] = None,
+        max_distance_km: Optional[float] = None
     ) -> Optional[PoliceStation]:
         """
         Find the nearest police station to given GPS coordinates.
         
-        Routing priority:
-        1. Area-name match (if area_name/sub_locality provided)
-        2. GPS haversine distance
-        
         Args:
             latitude: Incident latitude (degrees, -90 to 90)
             longitude: Incident longitude (degrees, -180 to 180)
-            state: Optional state filter
+            state: Optional state filter (finds nearest within state)
             district: Optional district filter
             city: Optional city filter
             max_distance_km: Maximum distance to consider (default: 500km)
-            area_name: Area/locality name for area-based routing
-            sub_locality: Sub-locality name for area-based routing
             
         Returns:
-            Nearest PoliceStation or None
+            Nearest PoliceStation or None if no station found within max distance
+            
+        Raises:
+            ValueError: If coordinates are invalid
         """
+        # Validate coordinates
         cls._validate_coordinates(latitude, longitude)
         
-        # Priority 1: Area-name based routing
-        if area_name or sub_locality:
-            try:
-                from reports.services.ahmedabad_zones import AhmedabadZoneService
-                
-                station = AhmedabadZoneService.find_station_by_area(
-                    area_name=area_name,
-                    sub_locality=sub_locality,
-                    city=city,
-                )
-                if station:
-                    logger.info(
-                        f"Station routed by area: {station.name} "
-                        f"(area='{area_name}', sub='{sub_locality}')"
-                    )
-                    return station
-            except Exception as e:
-                logger.warning(f"Area-based routing failed: {e}")
-        
-        # Priority 2: GPS haversine distance
         max_distance = max_distance_km or cls.MAX_ROUTING_DISTANCE_KM
         
-        # If within Ahmedabad bounds, prefer Ahmedabad stations
-        try:
-            from reports.services.ahmedabad_zones import AhmedabadZoneService
-            if AhmedabadZoneService.is_within_ahmedabad(latitude, longitude):
-                ahm_stations = cls._get_active_stations(
-                    state='Gujarat', city='Ahmedabad'
-                )
-                station = cls._find_nearest_in_queryset(
-                    latitude, longitude, ahm_stations, max_distance
-                )
-                if station:
-                    logger.info(
-                        f"Station routed by GPS (Ahmedabad): {station.name} "
-                        f"({latitude}, {longitude})"
-                    )
-                    return station
-        except Exception:
-            pass
-        
-        # General fallback: search all stations
         stations = cls._get_active_stations(state, district, city)
-        station = cls._find_nearest_in_queryset(
-            latitude, longitude, stations, max_distance
-        )
-        if station:
-            logger.info(
-                f"Station routed by GPS (general): {station.name} "
-                f"({latitude}, {longitude})"
-            )
-        return station
-    
-    @classmethod
-    def _find_nearest_in_queryset(
-        cls,
-        latitude: float,
-        longitude: float,
-        stations: QuerySet,
-        max_distance: float,
-    ) -> Optional[PoliceStation]:
-        """Find the nearest station in a queryset."""
+        
         nearest_station = None
         nearest_distance = float('inf')
         
@@ -219,34 +176,47 @@ class JurisdictionService:
         state: Optional[str] = None,
         district: Optional[str] = None,
         city: Optional[str] = None,
-        max_distance_km: Optional[float] = None,
-        area_name: Optional[str] = None,
-        sub_locality: Optional[str] = None,
+        max_distance_km: Optional[float] = None
     ) -> Tuple[Optional[PoliceStation], Optional[float]]:
         """
         Find nearest station and return both station and distance.
         
+        Same as find_nearest_station but also returns the distance.
+        
+        Args:
+            latitude: Incident latitude
+            longitude: Incident longitude
+            state: Optional state filter
+            district: Optional district filter
+            city: Optional city filter
+            max_distance_km: Maximum distance to consider
+            
         Returns:
             Tuple of (PoliceStation or None, distance in km or None)
         """
         cls._validate_coordinates(latitude, longitude)
         
-        station = cls.find_nearest_station(
-            latitude, longitude,
-            state=state, district=district, city=city,
-            max_distance_km=max_distance_km,
-            area_name=area_name, sub_locality=sub_locality,
-        )
+        max_distance = max_distance_km or cls.MAX_ROUTING_DISTANCE_KM
         
-        if station is None:
+        stations = cls._get_active_stations(state, district, city)
+        
+        nearest_station = None
+        nearest_distance = float('inf')
+        
+        for station in stations:
+            distance = cls.haversine_distance(
+                latitude, longitude,
+                station.latitude, station.longitude
+            )
+            
+            if distance < nearest_distance and distance <= max_distance:
+                nearest_distance = distance
+                nearest_station = station
+        
+        if nearest_station is None:
             return None, None
         
-        distance = round(cls.haversine_distance(
-            latitude, longitude,
-            station.latitude, station.longitude
-        ), 2)
-        
-        return station, distance
+        return nearest_station, round(nearest_distance, 2)
     
     @classmethod
     def find_stations_within_radius(
@@ -260,6 +230,15 @@ class JurisdictionService:
         """
         Find all stations within a given radius, sorted by distance.
         
+        Useful for showing nearby stations or fallback routing.
+        
+        Args:
+            latitude: Center point latitude
+            longitude: Center point longitude
+            radius_km: Search radius in kilometers
+            state: Optional state filter
+            limit: Maximum number of stations to return
+            
         Returns:
             List of tuples (PoliceStation, distance_km) sorted by distance
         """
@@ -280,6 +259,7 @@ class JurisdictionService:
             if distance <= radius_km:
                 results.append((station, round(distance, 2)))
         
+        # Sort by distance
         results.sort(key=lambda x: x[1])
         
         if limit:
@@ -294,7 +274,17 @@ class JurisdictionService:
         longitude: float,
         station: PoliceStation
     ) -> float:
-        """Calculate distance from a point to a specific station."""
+        """
+        Calculate distance from a point to a specific station.
+        
+        Args:
+            latitude: Point latitude
+            longitude: Point longitude
+            station: PoliceStation object
+            
+        Returns:
+            Distance in kilometers
+        """
         cls._validate_coordinates(latitude, longitude)
         
         return round(
@@ -307,7 +297,16 @@ class JurisdictionService:
     
     @classmethod
     def _validate_coordinates(cls, latitude: float, longitude: float) -> None:
-        """Validate GPS coordinates are within valid range."""
+        """
+        Validate GPS coordinates are within valid range.
+        
+        Args:
+            latitude: Latitude to validate (-90 to 90)
+            longitude: Longitude to validate (-180 to 180)
+            
+        Raises:
+            ValueError: If coordinates are out of range
+        """
         lat = float(latitude)
         lon = float(longitude)
         
