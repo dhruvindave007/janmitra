@@ -1,11 +1,15 @@
 """
 BroadcastIncidentService: Handles incident creation workflow.
 
+V1 Controlled Reporting:
+- JANMITRA users: routed to their assigned police_station (no GPS routing)
+- Authority users: existing GPS-based JurisdictionService routing preserved
+
 Citizen submits incident → System creates case with:
 - status = NEW
 - current_level = L1
 - sla_deadline = current time + 48 hours
-- Nearest police station assigned via GPS
+- Police station from user assignment (JANMITRA) or GPS (others)
 - System message added for case creation
 - L1 and L2 at police station notified
 
@@ -21,6 +25,7 @@ Usage:
     )
 """
 
+import logging
 import os
 from datetime import timedelta
 from typing import Optional, List, Tuple
@@ -29,6 +34,7 @@ from decimal import Decimal
 from django.utils import timezone
 from django.db import transaction
 
+from authentication.models import UserRole
 from reports.models import (
     Incident, Case, IncidentMedia, IncidentMediaType,
     CaseLevel, CaseStatus, CaseStatusHistory, IncidentCategory
@@ -36,6 +42,8 @@ from reports.models import (
 from reports.services.jurisdiction import JurisdictionService
 from reports.services.investigation import InvestigationService
 from notifications.services import NotificationService
+
+logger = logging.getLogger('janmitra.broadcast')
 
 
 class IncidentCreationError(Exception):
@@ -47,9 +55,11 @@ class BroadcastIncidentService:
     """
     Service for creating incidents and cases.
     
-    Flow per .ai architecture:
+    V1 Flow:
     1. Validate inputs
-    2. Determine nearest police station using GPS
+    2. Determine police station:
+       - JANMITRA → use user.police_station (assigned by admin)
+       - Others → GPS-based JurisdictionService routing
     3. Create incident (immutable record)
     4. Create case with status=NEW, current_level=L1, sla_deadline=now+48h
     5. Attach media if provided (with validation)
@@ -126,16 +136,30 @@ class BroadcastIncidentService:
                 lat_decimal = None
                 lon_decimal = None
         
-        # Find nearest police station
+        # Determine police station
         station = None
-        if lat_decimal is not None and lon_decimal is not None:
-            try:
-                station = JurisdictionService.find_nearest_station(
-                    float(lat_decimal),
-                    float(lon_decimal)
+        if user.role == UserRole.JANMITRA:
+            # V1: JANMITRA users route to their assigned police_station
+            station = user.police_station
+            if station is None:
+                raise IncidentCreationError(
+                    "You are not assigned to a police station. "
+                    "Please contact administration."
                 )
-            except Exception:
-                pass
+            logger.info(
+                "V1 controlled routing: JANMITRA user=%s → station=%s",
+                user.identifier, station.name
+            )
+        else:
+            # Non-JANMITRA: GPS-based routing via JurisdictionService
+            if lat_decimal is not None and lon_decimal is not None:
+                try:
+                    station = JurisdictionService.find_nearest_station(
+                        float(lat_decimal),
+                        float(lon_decimal)
+                    )
+                except Exception:
+                    pass
         
         # Calculate SLA deadline: current time + 48 hours
         sla_deadline = timezone.now() + timedelta(hours=48)

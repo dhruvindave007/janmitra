@@ -471,16 +471,19 @@ class DeviceBoundTokenRefreshSerializer(TokenRefreshSerializer):
 class UserSerializer(serializers.ModelSerializer):
     """
     Serializer for authority users.
-    Includes profile information.
+    Includes profile information and assigned police station.
     """
     
     profile = serializers.SerializerMethodField()
+    police_station_id = serializers.SerializerMethodField()
+    police_station_name = serializers.SerializerMethodField()
     
     class Meta:
         model = User
         fields = [
             'id', 'identifier', 'role', 'status',
             'is_active', 'last_login', 'created_at',
+            'police_station_id', 'police_station_name',
             'profile'
         ]
         read_only_fields = fields
@@ -489,21 +492,32 @@ class UserSerializer(serializers.ModelSerializer):
         if hasattr(obj, 'authority_profile'):
             return AuthorityProfileSerializer(obj.authority_profile).data
         return None
+    
+    def get_police_station_id(self, obj):
+        return str(obj.police_station_id) if obj.police_station_id else None
+    
+    def get_police_station_name(self, obj):
+        if obj.police_station:
+            return obj.police_station.name
+        return None
 
 
 class JanMitraUserSerializer(serializers.ModelSerializer):
     """
     Serializer for JanMitra users.
-    Limited information for privacy.
+    Includes assigned police station for V1 controlled reporting.
     """
     
     profile = serializers.SerializerMethodField()
+    police_station_id = serializers.SerializerMethodField()
+    police_station_name = serializers.SerializerMethodField()
     
     class Meta:
         model = User
         fields = [
             'id', 'identifier', 'role', 'status',
             'is_active', 'last_login', 'created_at',
+            'police_station_id', 'police_station_name',
             'profile'
         ]
         read_only_fields = fields
@@ -511,6 +525,14 @@ class JanMitraUserSerializer(serializers.ModelSerializer):
     def get_profile(self, obj):
         if hasattr(obj, 'janmitra_profile'):
             return JanMitraProfileSerializer(obj.janmitra_profile).data
+        return None
+    
+    def get_police_station_id(self, obj):
+        return str(obj.police_station_id) if obj.police_station_id else None
+    
+    def get_police_station_name(self, obj):
+        if obj.police_station:
+            return obj.police_station.name
         return None
 
 
