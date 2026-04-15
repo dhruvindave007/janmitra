@@ -249,3 +249,68 @@ class PoliceStation(BaseModel):
     
     def __str__(self):
         return f"{self.name} ({self.code})"
+
+
+# =============================================================================
+# APP VERSION CONFIG MODEL
+# =============================================================================
+
+class AppVersionConfig(BaseModel):
+    """
+    Singleton-ish config for mobile app version control.
+    
+    Only one record should be active at a time.
+    Used by the public /api/v1/app/version-check/ endpoint.
+    """
+    
+    latest_version = models.CharField(
+        max_length=20,
+        help_text="Latest app version string (e.g., 1.2.0)"
+    )
+    
+    force_update = models.BooleanField(
+        default=False,
+        help_text="If True, users on older versions are blocked until they update"
+    )
+    
+    apk_url = models.URLField(
+        max_length=500,
+        blank=True,
+        default='',
+        help_text="Direct download URL for the latest APK"
+    )
+    
+    release_notes = models.TextField(
+        blank=True,
+        default='',
+        help_text="What's new in this version (shown to users)"
+    )
+    
+    is_active = models.BooleanField(
+        default=True,
+        db_index=True,
+        help_text="Only the active config is served to clients"
+    )
+    
+    class Meta:
+        db_table = 'app_version_config'
+        verbose_name = 'App Version Config'
+        verbose_name_plural = 'App Version Configs'
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        status = '✅ ACTIVE' if self.is_active else '⏸ Inactive'
+        return f"v{self.latest_version} ({status})"
+    
+    def save(self, *args, **kwargs):
+        if self.is_active:
+            # Deactivate all other configs when this one is activated
+            AppVersionConfig.objects.filter(
+                is_active=True
+            ).exclude(pk=self.pk).update(is_active=False)
+        super().save(*args, **kwargs)
+    
+    @classmethod
+    def get_active(cls):
+        """Return the current active version config, or None."""
+        return cls.objects.filter(is_active=True).first()

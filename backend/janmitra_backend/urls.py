@@ -70,6 +70,9 @@ urlpatterns = [
     # Notification endpoints
     path('api/v1/notifications/', include('notifications.urls', namespace='notifications')),
     
+    # App management endpoints (public — no auth required)
+    path('api/v1/app/', include('core.urls', namespace='core')),
+    
     # Django admin (restricted access)
     path('admin/', admin.site.urls),
 ]
