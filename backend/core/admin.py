@@ -6,7 +6,7 @@ from django.contrib import admin
 from django.db.models import Count, Q
 from django.utils.html import format_html
 
-from .models import PoliceStation
+from .models import PoliceStation, AppVersionConfig
 from authentication.models import User
 
 
@@ -112,3 +112,66 @@ class PoliceStationAdmin(admin.ModelAdmin):
         )
     case_count_display.short_description = 'Cases'
     case_count_display.admin_order_field = '_case_count'
+
+
+@admin.register(AppVersionConfig)
+class AppVersionConfigAdmin(admin.ModelAdmin):
+    """
+    Admin for mobile app version management.
+    
+    Only one config should be active at a time.
+    Saving an active config auto-deactivates others.
+    """
+    
+    list_display = [
+        'latest_version',
+        'force_update_badge',
+        'is_active_badge',
+        'apk_url_short',
+        'created_at',
+        'updated_at',
+    ]
+    list_filter = ['is_active', 'force_update']
+    readonly_fields = ['id', 'created_at', 'updated_at']
+    ordering = ['-created_at']
+    list_per_page = 20
+    
+    fieldsets = (
+        ('Version', {
+            'fields': ('latest_version', 'force_update', 'is_active'),
+        }),
+        ('Download', {
+            'fields': ('apk_url',),
+        }),
+        ('Release Notes', {
+            'fields': ('release_notes',),
+        }),
+        ('Metadata', {
+            'fields': ('id', 'created_at', 'updated_at'),
+            'classes': ('collapse',),
+        }),
+    )
+    
+    def force_update_badge(self, obj):
+        if obj.force_update:
+            return format_html(
+                '<span style="background:#e74c3c; color:white; padding:2px 8px; '
+                'border-radius:3px; font-size:11px;">FORCED</span>'
+            )
+        return format_html(
+            '<span style="background:#27ae60; color:white; padding:2px 8px; '
+            'border-radius:3px; font-size:11px;">Optional</span>'
+        )
+    force_update_badge.short_description = 'Update Type'
+    
+    def is_active_badge(self, obj):
+        return obj.is_active
+    is_active_badge.boolean = True
+    is_active_badge.short_description = 'Active'
+    
+    def apk_url_short(self, obj):
+        if obj.apk_url:
+            display = obj.apk_url[:50] + '...' if len(obj.apk_url) > 50 else obj.apk_url
+            return format_html('<a href="{}" target="_blank">{}</a>', obj.apk_url, display)
+        return '-'
+    apk_url_short.short_description = 'APK URL'

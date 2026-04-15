@@ -58,6 +58,7 @@ GROUPS = OrderedDict([
         'models': [
             ('audit', 'auditlog'),
             ('audit', 'identityreveallog'),
+            ('core', 'appversionconfig'),
         ],
     }),
 ])
