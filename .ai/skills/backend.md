@@ -51,8 +51,14 @@ All business logic lives in services, NOT in views:
 ## INCIDENT CREATION (BroadcastIncidentService)
 Accepts: user, text_content, category, latitude, longitude, media_files, area_name, city, state
 Creates: Incident (immutable) + Case (status=NEW, level=L1, sla=48h) + IncidentMedia + system message
-Routing: JurisdictionService finds nearest PoliceStation by GPS coordinates
 Notifies: L1 and L2 at assigned police station
+
+### V1 Station Routing (Temporary)
+- JANMITRA users: use user.police_station (admin-assigned). NO GPS routing.
+  - If user has no assigned police_station → return error
+  - Admin assigns station via Django Admin User form
+- Non-JANMITRA users (officers): keep existing JurisdictionService GPS routing
+- GPS coordinates still captured for all users (logging/verification)
 
 ## KEY FILES
 - `reports/models.py` — Case, Incident, CaseStatus, CaseLevel, InvestigationMessage, CaseNote, etc.

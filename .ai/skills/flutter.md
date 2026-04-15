@@ -97,11 +97,19 @@ Action buttons vary by role and case status:
 - Sends via POST /cases/{id}/messages/send/ with body: {text: "..."}
 
 ## CITIZEN SUBMISSION (broadcast/)
-- GPS location captured automatically (mandatory)
+- GPS location captured automatically (always, for logging/verification)
 - LocationResolver reverse geocodes to area_name, city, state
 - All three sent to backend alongside lat/lng
 - Media files uploaded via multipart POST
 - Offline draft storage for poor connectivity
+
+### V1 Controlled Reporting (Temporary)
+- Station shown at top: "This report will be sent to [Police Station Name]"
+- Station comes from user.policeStationName (set by admin, returned in login response)
+- Toggle: "Use current location as incident location" (default ON)
+- When OFF: TextFormField for manual incident location description
+- GPS always captured regardless of toggle (sent as lat/lng for verification)
+- Login response includes police_station_id and police_station_name fields
 
 ## DEPENDENCY INJECTION (core/di/)
 HttpClientHolder singleton provides authenticated HTTP client.

@@ -90,11 +90,16 @@ L1 assigns L0 → L0 investigates → SLA breach escalates to L3 → then L4
 ## BACKEND SERVICES (reports/services/)
 | Service | Purpose |
 |---------|---------|
-| broadcast.py | BroadcastIncidentService — create incident+case, GPS routing, media, notify |
+| broadcast.py | BroadcastIncidentService — create incident+case, station routing, media, notify |
 | assignment.py | AssignmentService — L1 assigns L0, validates station match |
 | escalation.py | EscalationService — SLA breach detection, auto-escalate |
 | investigation.py | InvestigationService — chat messages, access control, system messages |
 | jurisdiction.py | JurisdictionService — haversine GPS routing to nearest station |
+
+### V1 Station Routing (Temporary)
+- JANMITRA users route to admin-assigned `user.police_station` (no GPS routing)
+- Non-JANMITRA users keep GPS routing via JurisdictionService
+- GPS coordinates always captured for logging/verification
 
 ## KEY API ENDPOINTS (reports/incident_urls.py)
 ```
