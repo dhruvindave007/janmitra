@@ -505,8 +505,9 @@ class IncidentBroadcastView(views.APIView):
     
     Request (multipart/form-data or JSON):
     {
-        "description": "Incident description",  # or "text_content"
-        "category": "public_safety",  (optional)
+        "description": "Incident description",
+        "incident_location": "SG Highway near Iscon Mall",
+        "category": "THEFT",
         "latitude": 12.9716,
         "longitude": 77.5946,
         "media_files": [file1, file2, file3]  (optional, max 3)
@@ -516,7 +517,8 @@ class IncidentBroadcastView(views.APIView):
     {
         "incident_id": "uuid",
         "case_id": "uuid",
-        "media_uploaded": 2
+        "media_uploaded": 2,
+        "message": "Incident reported successfully"
     }
     """
     
@@ -534,13 +536,29 @@ class IncidentBroadcastView(views.APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        # V2: incident_location is REQUIRED
+        incident_location = request.data.get('incident_location', '')
+        incident_location = incident_location.strip() if incident_location else ''
+        if not incident_location:
+            return Response(
+                {'error': 'Please enter a valid incident location'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # V2: GPS is MANDATORY
         latitude = request.data.get('latitude')
         longitude = request.data.get('longitude')
-        
-        # Validate latitude and longitude are provided together
-        if (latitude is None) != (longitude is None):
+        if latitude is None or longitude is None:
             return Response(
-                {'error': 'Both latitude and longitude are required'},
+                {'error': 'GPS location is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # V2: Category is REQUIRED
+        category = request.data.get('category', '')
+        if not category or category not in IncidentCategory.VALID_VALUES:
+            return Response(
+                {'error': 'Please select a valid incident category'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -548,7 +566,8 @@ class IncidentBroadcastView(views.APIView):
             incident, case, media_uploaded, media_errors = BroadcastIncidentService.execute(
                 user=request.user,
                 text_content=description,
-                category=request.data.get('category', IncidentCategory.GENERAL),
+                incident_location=incident_location,
+                category=category,
                 latitude=latitude,
                 longitude=longitude,
                 media_files=request.FILES.getlist('media_files') or request.FILES.getlist('media'),

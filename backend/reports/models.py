@@ -591,26 +591,48 @@ class ReportNote(AuditableModel):
 # =============================================================================
 
 class IncidentCategory:
-    """Incident category constants."""
-    GENERAL = 'general'
-    PUBLIC_SAFETY = 'public_safety'
-    INFRASTRUCTURE = 'infrastructure'
-    ENVIRONMENTAL = 'environmental'
-    SOCIAL = 'social'
-    ECONOMIC = 'economic'
-    GOVERNANCE = 'governance'
-    OTHER = 'other'
-    
+    """Incident category constants — fixed police-specific values."""
+    GAMBLING = 'GAMBLING'
+    THEFT = 'THEFT'
+    WOMEN_HARASSMENT = 'WOMEN_HARASSMENT'
+    PROPERTY_DISPUTE = 'PROPERTY_DISPUTE'
+    TRAFFIC_ISSUE = 'TRAFFIC_ISSUE'
+    MISSING_PERSON = 'MISSING_PERSON'
+    ILLEGAL_ALCOHOL = 'ILLEGAL_ALCOHOL'
+    VEHICLE_RELATED = 'VEHICLE_RELATED'
+    HARASSMENT = 'HARASSMENT'
+    PHYSICAL_INJURY = 'PHYSICAL_INJURY'
+    RTI_REQUEST = 'RTI_REQUEST'
+    LAND_DISPUTE = 'LAND_DISPUTE'
+    DOWRY = 'DOWRY'
+    ANTI_SOCIAL_ACTIVITY = 'ANTI_SOCIAL_ACTIVITY'
+    POLICE_COMPLAINT = 'POLICE_COMPLAINT'
+    SUICIDE = 'SUICIDE'
+    CYBER_CRIME = 'CYBER_CRIME'
+    LOST_PROPERTY = 'LOST_PROPERTY'
+
     CHOICES = [
-        (GENERAL, 'General'),
-        (PUBLIC_SAFETY, 'Public Safety'),
-        (INFRASTRUCTURE, 'Infrastructure'),
-        (ENVIRONMENTAL, 'Environmental'),
-        (SOCIAL, 'Social'),
-        (ECONOMIC, 'Economic'),
-        (GOVERNANCE, 'Governance'),
-        (OTHER, 'Other'),
+        (GAMBLING, 'Gambling'),
+        (THEFT, 'Theft'),
+        (WOMEN_HARASSMENT, 'Women Harassment'),
+        (PROPERTY_DISPUTE, 'Property Dispute'),
+        (TRAFFIC_ISSUE, 'Traffic Issue'),
+        (MISSING_PERSON, 'Missing Person'),
+        (ILLEGAL_ALCOHOL, 'Illegal Alcohol'),
+        (VEHICLE_RELATED, 'Vehicle Related'),
+        (HARASSMENT, 'Harassment'),
+        (PHYSICAL_INJURY, 'Physical Injury'),
+        (RTI_REQUEST, 'RTI Request'),
+        (LAND_DISPUTE, 'Land Dispute'),
+        (DOWRY, 'Dowry'),
+        (ANTI_SOCIAL_ACTIVITY, 'Anti-social Activity'),
+        (POLICE_COMPLAINT, 'Complaint Against Police'),
+        (SUICIDE, 'Suicide'),
+        (CYBER_CRIME, 'Cyber Crime'),
+        (LOST_PROPERTY, 'Lost/Stolen Property'),
     ]
+
+    VALID_VALUES = {c[0] for c in CHOICES}
 
 
 class CaseStatus:
@@ -702,9 +724,14 @@ class Incident(BaseModel):
     category = models.CharField(
         max_length=30,
         choices=IncidentCategory.CHOICES,
-        default=IncidentCategory.GENERAL,
         db_index=True,
-        help_text="Incident category"
+        help_text="Incident category (required)"
+    )
+    
+    # Manual incident location (required — user-entered text)
+    incident_location = models.CharField(
+        max_length=500,
+        help_text="Manual incident location description (required)"
     )
     
     # Location (optional)

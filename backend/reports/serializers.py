@@ -44,6 +44,7 @@ class IncidentSerializer(serializers.ModelSerializer):
             'text_content',
             'category',
             'category_display',
+            'incident_location',
             'latitude',
             'longitude',
             'area_name',
