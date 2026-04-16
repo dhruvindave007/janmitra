@@ -1,9 +1,11 @@
 """
 BroadcastIncidentService: Handles incident creation workflow.
 
-V1 Controlled Reporting:
-- JANMITRA users: routed to their assigned police_station (no GPS routing)
-- Authority users: existing GPS-based JurisdictionService routing preserved
+V2 Strict Location Enforcement:
+- incident_location (manual text) is REQUIRED, validated for precision
+- GPS (latitude/longitude) is MANDATORY for audit/logging only
+- GPS is NOT used for routing; JANMITRA users route to assigned station
+- Category is REQUIRED and must be one of 18 predefined values
 
 Citizen submits incident → System creates case with:
 - status = NEW
@@ -19,6 +21,8 @@ Usage:
     incident, case, media_count, errors = BroadcastIncidentService.execute(
         user=citizen_user,
         text_content="Description of incident",
+        incident_location="SG Highway near Iscon Mall",
+        category="THEFT",
         latitude=12.9716,
         longitude=77.5946,
         media_files=[file1, file2],
@@ -27,6 +31,7 @@ Usage:
 
 import logging
 import os
+import re
 from datetime import timedelta
 from typing import Optional, List, Tuple
 from decimal import Decimal
@@ -45,6 +50,13 @@ from notifications.services import NotificationService
 
 logger = logging.getLogger('janmitra.broadcast')
 
+# Vague location terms that should be rejected
+VAGUE_LOCATION_TERMS = [
+    'road', 'area', 'nearby', 'somewhere', 'here', 'there',
+    'unknown', 'na', 'n/a', 'none', 'nil', 'xyz', 'abc',
+    'test', 'asdf', 'location',
+]
+
 
 class IncidentCreationError(Exception):
     """Raised when incident creation fails."""
@@ -55,8 +67,8 @@ class BroadcastIncidentService:
     """
     Service for creating incidents and cases.
     
-    V1 Flow:
-    1. Validate inputs
+    V2 Flow:
+    1. Validate inputs (strict location + GPS + category)
     2. Determine police station:
        - JANMITRA → use user.police_station (assigned by admin)
        - Others → GPS-based JurisdictionService routing
@@ -67,14 +79,46 @@ class BroadcastIncidentService:
     7. Notify L1 and L2 users of that police station only
     """
     
+    MIN_LOCATION_LENGTH = 5
+    
+    @classmethod
+    def _validate_incident_location(cls, location: str) -> str:
+        """Validate incident_location for precision and reject vague values."""
+        if not location or not location.strip():
+            raise IncidentCreationError("Please enter a valid incident location")
+        
+        location = location.strip()
+        
+        if len(location) < cls.MIN_LOCATION_LENGTH:
+            raise IncidentCreationError(
+                "Please enter a valid incident location"
+            )
+        
+        # Reject vague single-word locations
+        location_lower = location.lower().strip()
+        if location_lower in VAGUE_LOCATION_TERMS:
+            raise IncidentCreationError(
+                "Please enter a precise location (e.g., Street / Landmark / Area)"
+            )
+        
+        # Reject if ALL words are vague
+        words = re.split(r'\s+', location_lower)
+        if all(w in VAGUE_LOCATION_TERMS for w in words if len(w) > 1):
+            raise IncidentCreationError(
+                "Please enter a precise location (e.g., Street / Landmark / Area)"
+            )
+        
+        return location
+    
     @classmethod
     def execute(
         cls,
         user,
         text_content: str,
-        category: str = IncidentCategory.GENERAL,
-        latitude: Optional[float] = None,
-        longitude: Optional[float] = None,
+        incident_location: str,
+        category: str,
+        latitude: float,
+        longitude: float,
         media_files: Optional[List] = None,
         area_name: Optional[str] = None,
         city: Optional[str] = None,
@@ -86,11 +130,12 @@ class BroadcastIncidentService:
         Args:
             user: Citizen user submitting the incident
             text_content: Description of the incident (required)
-            category: Incident category (default: GENERAL)
-            latitude: GPS latitude (optional but recommended)
-            longitude: GPS longitude (optional but recommended)
+            incident_location: Manual location text (required, validated)
+            category: Incident category (required, from predefined list)
+            latitude: GPS latitude (required for audit)
+            longitude: GPS longitude (required for audit)
             media_files: List of uploaded files (optional, max 3)
-            area_name: Resolved area name (optional)
+            area_name: Resolved area name from geocoding (optional)
             city: City name (optional)
             state: State name (optional)
             
@@ -100,12 +145,25 @@ class BroadcastIncidentService:
         Raises:
             IncidentCreationError: If critical validation fails
         """
-        # Validate required input
+        # Validate required description
         if not text_content or not text_content.strip():
             raise IncidentCreationError("Incident description is required")
+        text_content = text_content.strip()
+        
+        # Validate incident_location (strict)
+        incident_location = cls._validate_incident_location(incident_location)
+        
+        # Validate category (required, must be from predefined list)
+        if not category or category not in IncidentCategory.VALID_VALUES:
+            raise IncidentCreationError(
+                "Please select a valid incident category"
+            )
+        
+        # Validate GPS (mandatory for audit)
+        if latitude is None or longitude is None:
+            raise IncidentCreationError("GPS location is required")
         
         # Sanitize inputs
-        text_content = text_content.strip()
         if area_name and len(area_name) > 255:
             area_name = area_name[:255]
         if city and len(city) > 255:
@@ -113,33 +171,20 @@ class BroadcastIncidentService:
         if state and len(state) > 255:
             state = state[:255]
         
-        # Validate category
-        valid_categories = dict(IncidentCategory.CHOICES)
-        if category not in valid_categories:
-            category = IncidentCategory.GENERAL
-        
         # Validate and convert coordinates
-        lat_decimal = None
-        lon_decimal = None
-        if latitude is not None and longitude is not None:
-            try:
-                lat_decimal = Decimal(str(latitude))
-                lon_decimal = Decimal(str(longitude))
-                # Validate coordinate ranges
-                if not (-90 <= float(lat_decimal) <= 90):
-                    lat_decimal = None
-                    lon_decimal = None
-                elif not (-180 <= float(lon_decimal) <= 180):
-                    lat_decimal = None
-                    lon_decimal = None
-            except (ValueError, TypeError):
-                lat_decimal = None
-                lon_decimal = None
+        try:
+            lat_decimal = Decimal(str(latitude))
+            lon_decimal = Decimal(str(longitude))
+            if not (-90 <= float(lat_decimal) <= 90):
+                raise IncidentCreationError("Invalid latitude value")
+            if not (-180 <= float(lon_decimal) <= 180):
+                raise IncidentCreationError("Invalid longitude value")
+        except (ValueError, TypeError):
+            raise IncidentCreationError("Invalid GPS coordinates")
         
-        # Determine police station
+        # Determine police station (GPS NOT used for routing)
         station = None
         if user.role == UserRole.JANMITRA:
-            # V1: JANMITRA users route to their assigned police_station
             station = user.police_station
             if station is None:
                 raise IncidentCreationError(
@@ -147,19 +192,17 @@ class BroadcastIncidentService:
                     "Please contact administration."
                 )
             logger.info(
-                "V1 controlled routing: JANMITRA user=%s → station=%s",
+                "V2 routing: JANMITRA user=%s → station=%s",
                 user.identifier, station.name
             )
         else:
-            # Non-JANMITRA: GPS-based routing via JurisdictionService
-            if lat_decimal is not None and lon_decimal is not None:
-                try:
-                    station = JurisdictionService.find_nearest_station(
-                        float(lat_decimal),
-                        float(lon_decimal)
-                    )
-                except Exception:
-                    pass
+            # Non-JANMITRA: still use GPS for station routing
+            try:
+                station = JurisdictionService.find_nearest_station(
+                    float(lat_decimal), float(lon_decimal)
+                )
+            except Exception:
+                pass
         
         # Calculate SLA deadline: current time + 48 hours
         sla_deadline = timezone.now() + timedelta(hours=48)
@@ -170,6 +213,7 @@ class BroadcastIncidentService:
             incident = Incident.objects.create(
                 submitted_by=user,
                 text_content=text_content,
+                incident_location=incident_location,
                 category=category,
                 latitude=lat_decimal,
                 longitude=lon_decimal,
@@ -194,7 +238,7 @@ class BroadcastIncidentService:
                 to_status=CaseStatus.NEW,
                 from_level=None,
                 to_level=CaseLevel.L1,
-                changed_by=None,  # System-initiated
+                changed_by=None,
                 reason="Case created from citizen incident submission",
                 is_auto_escalation=False,
             )
@@ -220,7 +264,6 @@ class BroadcastIncidentService:
         try:
             NotificationService.notify_new_case_l1_l2(case)
         except Exception:
-            # Don't fail case creation if notification fails
             pass
         
         return incident, case, media_uploaded, media_errors
