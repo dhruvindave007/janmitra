@@ -21,21 +21,26 @@ def version_check(request):
     whether an update is available or required.
     
     No authentication needed — must work before login.
+    Cache disabled — clients must always get fresh version data.
     """
     config = AppVersionConfig.get_active()
     
     if not config:
-        # No config set — return defaults (no update required)
-        return Response({
+        data = {
             'latest_version': '1.0.0',
             'force_update': False,
             'apk_url': '',
             'release_notes': '',
-        })
+        }
+    else:
+        data = {
+            'latest_version': config.latest_version,
+            'force_update': config.force_update,
+            'apk_url': config.apk_url,
+            'release_notes': config.release_notes,
+        }
     
-    return Response({
-        'latest_version': config.latest_version,
-        'force_update': config.force_update,
-        'apk_url': config.apk_url,
-        'release_notes': config.release_notes,
-    })
+    response = Response(data)
+    response['Cache-Control'] = 'no-store, no-cache, must-revalidate'
+    response['Pragma'] = 'no-cache'
+    return response
