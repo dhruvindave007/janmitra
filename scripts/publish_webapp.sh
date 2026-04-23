@@ -13,9 +13,9 @@ PUBLISH_DIR="${WEBAPP_PUBLISH_DIR:-/var/www/html/webapp}"
 BASE_HREF="${WEBAPP_BASE_HREF:-/webapp/}"
 FLUTTER_IMAGE="${FLUTTER_BUILD_IMAGE:-ghcr.io/cirruslabs/flutter:stable}"
 
-if [ ! -d "$APP_DIR" ]; then
-    echo "ERROR: Flutter app directory not found at $APP_DIR"
-    exit 1
+if [ ! -f "$APP_DIR/pubspec.yaml" ]; then
+    echo "WARNING: Flutter app source is not available at $APP_DIR. Skipping server-side web build."
+    exit 0
 fi
 
 build_with_local_flutter() {

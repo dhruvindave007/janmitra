@@ -108,7 +108,7 @@ Builds the Flutter web bundle with `/webapp/` as the base path and publishes it 
 bash ./scripts/publish_webapp.sh
 ```
 
-**Deployment note:** `deploy.sh` and `deploy_v1.sh` call this automatically, so each production deploy refreshes the hosted web app.
+**Deployment note:** `deploy.sh` and `deploy_v1.sh` call this when the Flutter source is present on the deployment machine, and `deploy_to_aws.ps1` always builds and uploads the latest web app from the local checkout.
 
 ## 📊 Output & Reports
 

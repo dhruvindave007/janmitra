@@ -168,7 +168,7 @@ echo -e "${GREEN}Static files collected${NC}"
 # Step 12: Build and publish web app
 echo -e "\n${YELLOW}[12/13] Build and Publish Web App${NC}"
 bash "$DEPLOY_DIR/scripts/publish_webapp.sh"
-echo -e "${GREEN}Web app published to /webapp/${NC}"
+echo -e "${GREEN}Web app publish step completed${NC}"
 
 # Step 13: Seed users
 echo -e "\n${YELLOW}[13/13] Seed Demo Users${NC}"
