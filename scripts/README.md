@@ -101,6 +101,15 @@ Automatically configures VS Code for the project
 - ✓ File associations
 - ✓ Auto-save and format on save
 
+### 5. `publish_webapp.sh` - Web App Publishing
+Builds the Flutter web bundle with `/webapp/` as the base path and publishes it to the production website directory.
+
+```bash
+bash ./scripts/publish_webapp.sh
+```
+
+**Deployment note:** `deploy.sh` and `deploy_v1.sh` call this automatically, so each production deploy refreshes the hosted web app.
+
 ## 📊 Output & Reports
 
 All automation outputs are saved to:
