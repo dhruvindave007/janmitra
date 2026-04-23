@@ -65,6 +65,17 @@ try {
     Write-Host "  Version API: Not yet reachable" -ForegroundColor Yellow
 }
 
+try {
+    $webResponse = Invoke-WebRequest -Uri "http://${ServerIP}/webapp/" -TimeoutSec 10
+    if ($webResponse.StatusCode -eq 200) {
+        Write-Host "  Web app: Updated and reachable" -ForegroundColor Green
+    } else {
+        Write-Host "  Web app: Returned status $($webResponse.StatusCode)" -ForegroundColor Yellow
+    }
+} catch {
+    Write-Host "  Web app: Not yet reachable" -ForegroundColor Yellow
+}
+
 # Step 5: Summary
 Write-Host "`n========================================" -ForegroundColor Cyan
 Write-Host "  DEPLOYMENT COMPLETE!" -ForegroundColor Green
@@ -72,6 +83,7 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  Admin:   http://$ServerIP/admin/" -ForegroundColor White
 Write-Host "  API:     http://$ServerIP/api/v1/" -ForegroundColor White
+Write-Host "  Web:     http://$ServerIP/webapp/" -ForegroundColor White
 Write-Host "  Health:  http://$ServerIP/health/" -ForegroundColor White
 Write-Host ""
 Write-Host "  SSH:     ssh -i `"$KeyFile`" $User@$ServerIP" -ForegroundColor Gray

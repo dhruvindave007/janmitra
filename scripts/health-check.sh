@@ -20,6 +20,13 @@ else
     echo "✗ NGINX: Unhealthy"
 fi
 
+# Check published web app
+if curl -sf http://localhost/webapp/ > /dev/null; then
+    echo "✓ Web App: Healthy"
+else
+    echo "✗ Web App: Unhealthy"
+fi
+
 # Check Django
 if docker-compose exec -T django curl -sf http://localhost:8000/api/health/ > /dev/null; then
     echo "✓ Django: Healthy"

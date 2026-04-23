@@ -73,7 +73,10 @@ docker-compose exec -T django python manage.py migrate
 echo -e "${YELLOW}Step 9: Collect Static Files${NC}"
 docker-compose exec -T django python manage.py collectstatic --noinput
 
-echo -e "${YELLOW}Step 10: Create Superuser${NC}"
+echo -e "${YELLOW}Step 10: Build and Publish Web App${NC}"
+bash ./scripts/publish_webapp.sh
+
+echo -e "${YELLOW}Step 11: Create Superuser${NC}"
 echo "Creating superuser (follow prompts):"
 docker-compose exec django python manage.py createsuperuser
 
@@ -85,6 +88,7 @@ echo ""
 echo "Access your application at:"
 echo "  API:    http://$(curl -s ifconfig.me)/api/"
 echo "  Admin:  http://$(curl -s ifconfig.me)/admin/"
+echo "  Web:    http://$(curl -s ifconfig.me)/webapp/"
 echo ""
 echo "Check logs with:"
 echo "  docker-compose logs -f"

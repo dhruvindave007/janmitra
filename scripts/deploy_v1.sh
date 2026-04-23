@@ -147,7 +147,7 @@ mkdir -p "$DEPLOY_DIR/backend/staticfiles"
 echo -e "${GREEN}Directories ready${NC}"
 
 # Step 9: Build and start Docker services
-echo -e "\n${YELLOW}[9/12] Building Docker Services (this takes 3-5 minutes)${NC}"
+echo -e "\n${YELLOW}[9/13] Building Docker Services (this takes 3-5 minutes)${NC}"
 cd "$DEPLOY_DIR"
 docker-compose -f docker-compose.yml -f docker-compose.prod.yml build --no-cache 2>&1 | tail -5
 docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
@@ -156,17 +156,22 @@ echo -e "${YELLOW}Waiting for services to start (30s)...${NC}"
 sleep 30
 
 # Step 10: Run migrations
-echo -e "\n${YELLOW}[10/12] Database Migrations${NC}"
+echo -e "\n${YELLOW}[10/13] Database Migrations${NC}"
 docker-compose exec -T django python manage.py migrate --noinput
 echo -e "${GREEN}Migrations complete${NC}"
 
 # Step 11: Collect static files
-echo -e "\n${YELLOW}[11/12] Static Files${NC}"
+echo -e "\n${YELLOW}[11/13] Static Files${NC}"
 docker-compose exec -T django python manage.py collectstatic --noinput
 echo -e "${GREEN}Static files collected${NC}"
 
-# Step 12: Seed users
-echo -e "\n${YELLOW}[12/12] Seed Demo Users${NC}"
+# Step 12: Build and publish web app
+echo -e "\n${YELLOW}[12/13] Build and Publish Web App${NC}"
+bash "$DEPLOY_DIR/scripts/publish_webapp.sh"
+echo -e "${GREEN}Web app published to /webapp/${NC}"
+
+# Step 13: Seed users
+echo -e "\n${YELLOW}[13/13] Seed Demo Users${NC}"
 docker-compose exec -T django python manage.py seed_users --force 2>/dev/null || echo "seed_users not available, creating superuser..."
 echo -e "${GREEN}Users ready${NC}"
 
@@ -177,6 +182,7 @@ sleep 5
 HEALTH=$(curl -s -o /dev/null -w "%{http_code}" http://localhost/health/ 2>/dev/null || echo "000")
 API=$(curl -s -o /dev/null -w "%{http_code}" http://localhost/api/v1/app/version-check/ 2>/dev/null || echo "000")
 ADMIN=$(curl -s -o /dev/null -w "%{http_code}" http://localhost/admin/ 2>/dev/null || echo "000")
+WEBAPP=$(curl -s -o /dev/null -w "%{http_code}" http://localhost/webapp/ 2>/dev/null || echo "000")
 
 echo ""
 echo -e "${CYAN}=========================================="
@@ -187,6 +193,7 @@ echo -e "  Server IP:  ${GREEN}$SERVER_IP${NC}"
 echo -e "  Health:     ${GREEN}http://$SERVER_IP/health/${NC}     → $HEALTH"
 echo -e "  API:        ${GREEN}http://$SERVER_IP/api/v1/${NC}     → $API"
 echo -e "  Admin:      ${GREEN}http://$SERVER_IP/admin/${NC}      → $ADMIN"
+echo -e "  Web App:    ${GREEN}http://$SERVER_IP/webapp/${NC}     → $WEBAPP"
 echo -e "  Version:    ${GREEN}http://$SERVER_IP/api/v1/app/version-check/${NC}"
 echo ""
 echo -e "  ${YELLOW}Docker Status:${NC}"
