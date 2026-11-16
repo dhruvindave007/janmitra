@@ -132,3 +132,21 @@ coverage.xml
 *.tmp
 *.temp
 *.orig
+
+# =============================================================================
+# LOCAL ARTIFACTS (never commit)
+# =============================================================================
+# Ad-hoc test fixtures and generated reports
+test-reports/
+/test_*.jpg
+/test_*.png
+*.zip
+# Mobile build outputs (whichever Flutter tree is checked out)
+janmitra_mobile/build/
+janmitra_mobile/.dart_tool/
+*.apk
+*.aab
+# Firebase / cloud credentials
+firebase-service-account.json
+firebase_credentials.json
+*service-account*.json

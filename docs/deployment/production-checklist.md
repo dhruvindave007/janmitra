@@ -2,7 +2,7 @@
 
 **Status**: All critical auth bugs fixed and pushed to GitHub  
 **Latest Commit**: `b12de1a` — Fix seed_users: pop full_name and email before create_user()  
-**Production Server**: AWS EC2 (34.229.130.142)  
+**Production Server**: AWS EC2 (<SERVER_IP>)  
 **Deployment Date**: [User to fill]
 
 ---
@@ -77,11 +77,11 @@ Done! Created: 5, Updated: 0
 
 ### Test 1: Login Endpoint (JanMitra Member)
 ```bash
-curl -X POST http://34.229.130.142/api/v1/auth/login/ \
+curl -X POST http://<SERVER_IP>/api/v1/auth/login/ \
   -H "Content-Type: application/json" \
   -d '{
     "identifier": "janmitra_demo",
-    "password": "Demo@123",
+    "password": "<DEMO_PASSWORD>",
     "device_id": "test-device-001"
   }'
 ```
@@ -101,11 +101,11 @@ curl -X POST http://34.229.130.142/api/v1/auth/login/ \
 
 ### Test 2: Login Endpoint (Authority - Level 2)
 ```bash
-curl -X POST http://34.229.130.142/api/v1/auth/login/ \
+curl -X POST http://<SERVER_IP>/api/v1/auth/login/ \
   -H "Content-Type: application/json" \
   -d '{
     "identifier": "level2@janmitra.gov.in",
-    "password": "Level2@123",
+    "password": "<DEMO_PASSWORD>",
     "device_id": "test-device-002"
   }'
 ```
@@ -119,7 +119,7 @@ ACCESS_TOKEN="<token from Test 1>"
 DEVICE_FP="<device fingerprint from Flutter>"
 
 # Then refresh with device binding header
-curl -X POST http://34.229.130.142/api/v1/auth/token/refresh/ \
+curl -X POST http://<SERVER_IP>/api/v1/auth/token/refresh/ \
   -H "Content-Type: application/json" \
   -H "X-Device-Fingerprint: $DEVICE_FP" \
   -d "{\"refresh\": \"$REFRESH_TOKEN\"}"
@@ -136,7 +136,7 @@ curl -X POST http://34.229.130.142/api/v1/auth/token/refresh/ \
 
 ### Test 4: CORS Preflight Check
 ```bash
-curl -X OPTIONS http://34.229.130.142/api/v1/auth/login/ \
+curl -X OPTIONS http://<SERVER_IP>/api/v1/auth/login/ \
   -H "Origin: http://localhost:3000" \
   -H "Access-Control-Request-Method: POST" \
   -H "Access-Control-Request-Headers: X-Device-Fingerprint"
@@ -157,10 +157,10 @@ Edit [janmitra_mobile/lib/core/constants/api_constants.dart](janmitra_mobile/lib
 
 ```dart
 // PRODUCTION
-static const String baseUrl = 'http://34.229.130.142';
+static const String baseUrl = 'http://<SERVER_IP>';
 
 // For HTTPS in the future:
-// static const String baseUrl = 'https://34.229.130.142';
+// static const String baseUrl = 'https://<SERVER_IP>';
 ```
 
 **Then rebuild the app:**
@@ -175,13 +175,13 @@ flutter run -d <device_id>
 
 #### Scenario 1: JanMitra Member Login
 1. Launch app → Login screen
-2. Enter: `janmitra_demo` / `Demo@123`
+2. Enter: `janmitra_demo` / `<DEMO_PASSWORD>`
 3. Tap "Login"
 4. **Expected:** Home screen appears, shows "JanMitra Member"
 
 #### Scenario 2: Authority Login (Level 2)
 1. Logout (if already logged in)
-2. Login with: `level2@janmitra.gov.in` / `Level2@123`
+2. Login with: `level2@janmitra.gov.in` / `<DEMO_PASSWORD>`
 3. Tap "Login"
 4. **Expected:** Home screen appears, shows "Authority (Level 2)"
 
@@ -211,8 +211,8 @@ flutter run -d <device_id>
 ### Demo Users Created
 | Identifier | Password | Role | Can Submit | Can Review | Can Escalate |
 |------------|----------|------|-----------|-----------|------------|
-| janmitra_demo | Demo@123 | JanMitra (L3) | ✅ | ❌ | ❌ |
-| level2@janmitra.gov.in | Level2@123 | Field Officer (L2) | ❌ | ✅ | ✅ |
+| janmitra_demo | <DEMO_PASSWORD> | JanMitra (L3) | ✅ | ❌ | ❌ |
+| level2@janmitra.gov.in | <DEMO_PASSWORD> | Field Officer (L2) | ❌ | ✅ | ✅ |
 | captain@janmitra.gov.in | Captain@123 | L2 Captain | ❌ | ✅ | ✅ |
 | level1@janmitra.gov.in | Level1@123 | Senior Authority (L1) | ❌ | ✅ | ✅ |
 | level0@janmitra.gov.in | Level0@123 | Super Admin (L0) | ❌ | ✅ | ✅ |

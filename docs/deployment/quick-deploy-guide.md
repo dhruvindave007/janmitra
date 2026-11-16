@@ -52,9 +52,9 @@ docker compose exec django python manage.py seed_users --force
 
 ```bash
 # Test login
-curl -X POST http://34.229.130.142/api/v1/auth/login/ \
+curl -X POST http://<SERVER_IP>/api/v1/auth/login/ \
   -H "Content-Type: application/json" \
-  -d '{"identifier":"janmitra_demo","password":"Demo@123","device_id":"test"}'
+  -d '{"identifier":"janmitra_demo","password":"<DEMO_PASSWORD>","device_id":"test"}'
 
 # Should return 200 with access + refresh tokens
 ```
@@ -69,7 +69,7 @@ curl -X POST http://34.229.130.142/api/v1/auth/login/ \
 | [backend/authentication/serializers.py](backend/authentication/serializers.py#L436) | Extract payload BEFORE super().validate() |
 | [backend/janmitra_backend/settings.py](backend/janmitra_backend/settings.py#L388) | Added x-device-fingerprint to CORS_ALLOW_HEADERS |
 | [backend/authentication/management/commands/seed_users.py](backend/authentication/management/commands/seed_users.py) | Pop full_name/email before create_user() |
-| [janmitra_mobile/lib/core/constants/api_constants.dart](janmitra_mobile/lib/core/constants/api_constants.dart) | Changed baseUrl to http://34.229.130.142 |
+| [janmitra_mobile/lib/core/constants/api_constants.dart](janmitra_mobile/lib/core/constants/api_constants.dart) | Changed baseUrl to http://<SERVER_IP> |
 
 ---
 
@@ -77,8 +77,8 @@ curl -X POST http://34.229.130.142/api/v1/auth/login/ \
 
 | User | Password | Role | API URL |
 |------|----------|------|---------|
-| janmitra_demo | Demo@123 | JanMitra Member | POST /api/v1/auth/login/ |
-| level2@janmitra.gov.in | Level2@123 | Field Officer | POST /api/v1/auth/login/ |
+| janmitra_demo | <DEMO_PASSWORD> | JanMitra Member | POST /api/v1/auth/login/ |
+| level2@janmitra.gov.in | <DEMO_PASSWORD> | Field Officer | POST /api/v1/auth/login/ |
 | captain@janmitra.gov.in | Captain@123 | L2 Captain | POST /api/v1/auth/login/ |
 | level1@janmitra.gov.in | Level1@123 | Senior Authority | POST /api/v1/auth/login/ |
 | level0@janmitra.gov.in | Level0@123 | Super Admin | POST /api/v1/auth/login/ |
@@ -103,9 +103,9 @@ curl -X POST http://34.229.130.142/api/v1/auth/login/ \
 
 3. **Test direct login**:
    ```bash
-   curl -X POST http://34.229.130.142/api/v1/auth/login/ \
+   curl -X POST http://<SERVER_IP>/api/v1/auth/login/ \
      -H "Content-Type: application/json" \
-     -d '{"identifier":"janmitra_demo","password":"Demo@123","device_id":"test"}'
+     -d '{"identifier":"janmitra_demo","password":"<DEMO_PASSWORD>","device_id":"test"}'
    ```
 
 4. **Check logs for errors**:
@@ -131,7 +131,7 @@ curl -X POST http://34.229.130.142/api/v1/auth/login/ \
 
 - **Full checklist**: [PRODUCTION_DEPLOYMENT_CHECKLIST.md](PRODUCTION_DEPLOYMENT_CHECKLIST.md)
 - **GitHub repo**: https://github.com/dhruvindave007/janmitra.git
-- **Production server**: http://34.229.130.142
+- **Production server**: http://<SERVER_IP>
 - **All commits**: `git log --oneline` on local repo
 
 ---

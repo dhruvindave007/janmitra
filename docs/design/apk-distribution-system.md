@@ -25,7 +25,7 @@ Key method: `AppVersion.get_active_version()` - retrieves the currently active v
 Returns three fields:
 - `latest_version`: Version string (e.g., "1.2.3")
 - `minimum_supported_version`: Minimum supported version
-- `apk_url`: Full URL to download the APK (e.g., "http://34.229.130.142/media/app_updates/janmitra-1.2.3.apk")
+- `apk_url`: Full URL to download the APK (e.g., "http://<SERVER_IP>/media/app_updates/janmitra-1.2.3.apk")
 
 #### 3. AppVersionView ([core/views.py](../core/views.py))
 API endpoint: `GET /api/v1/app/version/`
@@ -55,7 +55,7 @@ Custom admin with:
 ### For Admins (Django Admin)
 
 1. **Navigate to Admin Dashboard**
-   - URL: `http://34.229.130.142/admin/`
+   - URL: `http://<SERVER_IP>/admin/`
    - Login with admin credentials
 
 2. **Go to Core → App Versions**
@@ -85,13 +85,13 @@ Custom admin with:
 
 ```bash
 # Request
-curl http://34.229.130.142/api/v1/app/version/
+curl http://<SERVER_IP>/api/v1/app/version/
 
 # Response (200 OK)
 {
     "latest_version": "1.2.3",
     "minimum_supported_version": "1.0.0",
-    "apk_url": "http://34.229.130.142/media/app_updates/janmitra-1.2.3.apk"
+    "apk_url": "http://<SERVER_IP>/media/app_updates/janmitra-1.2.3.apk"
 }
 
 # Response if no version configured (404 Not Found)
@@ -108,7 +108,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 class AppUpdateService {
   static const String VERSION_CHECK_URL = 
-    'http://34.229.130.142/api/v1/app/version/';
+    'http://<SERVER_IP>/api/v1/app/version/';
   
   final Dio _dio = Dio();
   
@@ -227,10 +227,10 @@ CREATE TABLE app_versions (
 
 ```bash
 # Check for active version
-curl -X GET http://34.229.130.142/api/v1/app/version/
+curl -X GET http://<SERVER_IP>/api/v1/app/version/
 
 # Response with no version (404)
-curl -v http://34.229.130.142/api/v1/app/version/
+curl -v http://<SERVER_IP>/api/v1/app/version/
 ```
 
 ### Test Model Locally
@@ -330,10 +330,10 @@ Testing AppVersion System
 
 ```bash
 # Via curl
-adb shell 'curl http://34.229.130.142/api/v1/app/version/'
+adb shell 'curl http://<SERVER_IP>/api/v1/app/version/'
 
 # Via browser on phone
-# Visit: http://34.229.130.142/api/v1/app/version/
+# Visit: http://<SERVER_IP>/api/v1/app/version/
 ```
 
 ## Troubleshooting
