@@ -13,8 +13,8 @@ API Structure:
 from django.contrib import admin
 from django.urls import path, include
 from django.http import JsonResponse
-from django.conf import settings
-from django.conf.urls.static import static
+
+from core.views import protected_media
 
 
 def health_check(request):
@@ -75,8 +75,8 @@ urlpatterns = [
     
     # Django admin (restricted access)
     path('admin/', admin.site.urls),
+    
+    # Raw media files: staff session only (used by admin previews).
+    # API clients use the audited /api/v1/incidents/media/... endpoints.
+    path('media/<path:path>', protected_media, name='protected-media'),
 ]
-
-# Serve media files during development (DEBUG=True)
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

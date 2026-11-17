@@ -179,9 +179,11 @@ class BroadcastIncidentService:
                 raise IncidentCreationError("Invalid latitude value")
             if not (-180 <= float(lon_decimal) <= 180):
                 raise IncidentCreationError("Invalid longitude value")
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, ArithmeticError):
+            # Decimal('abc') raises decimal.InvalidOperation, an
+            # ArithmeticError, which used to escape as an HTTP 500.
             raise IncidentCreationError("Invalid GPS coordinates")
-        
+
         # Determine police station (GPS NOT used for routing)
         station = None
         if user.role == UserRole.JANMITRA:

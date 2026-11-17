@@ -11,10 +11,18 @@ def visible_cases_for_user(user):
     """
     from authentication.models import UserRole
     
+    from django.db.models import Count, Q
+
     qs = Case.objects.filter(is_deleted=False).select_related(
         'incident', 'incident__submitted_by', 'police_station', 'assigned_officer'
+    ).annotate(
+        # Lets list serializers report attachments without a query per row.
+        media_count=Count(
+            'incident__media_files',
+            filter=Q(incident__media_files__is_deleted=False),
+        )
     )
-    
+
     role = getattr(user, 'role', None)
     
     # New workflow roles

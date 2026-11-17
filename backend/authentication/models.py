@@ -18,6 +18,8 @@ Security Features:
 import uuid
 import secrets
 import hashlib
+from datetime import timedelta
+
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.utils import timezone
@@ -933,7 +935,7 @@ class InviteCode(BaseModel):
         return cls.objects.create(
             code=code,
             issued_by=issued_by,
-            expires_at=timezone.now() + timezone.timedelta(days=expires_in_days),
+            expires_at=timezone.now() + timedelta(days=expires_in_days),
             notes=notes
         )
     

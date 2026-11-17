@@ -20,6 +20,8 @@ Design principles:
 """
 
 import uuid
+
+from core.utils import get_client_ip, hash_device_fingerprint
 from django.db import models
 from django.utils import timezone
 
@@ -177,19 +179,27 @@ class AuditSeverity:
     ]
 
 
-class AuditLogManager(models.Manager):
+class AppendOnlyQuerySet(models.QuerySet):
     """
-    Custom manager for AuditLog.
-    Prevents any modifications to existing records.
+    QuerySet that refuses bulk writes.
+
+    The guard has to live on the QuerySet. Overriding update()/delete() on
+    the Manager alone only covers ``Model.objects.update()`` and leaves
+    ``Model.objects.filter(...).update()`` and ``.delete()`` unguarded.
     """
-    
-    def update(self, *args, **kwargs):
-        """Prevent bulk updates on audit logs."""
+
+    def update(self, **kwargs):
         raise PermissionError("Audit logs are immutable and cannot be updated.")
-    
-    def delete(self, *args, **kwargs):
-        """Prevent bulk deletes on audit logs."""
+
+    def delete(self):
         raise PermissionError("Audit logs are immutable and cannot be deleted.")
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        raise PermissionError("Audit logs are immutable and cannot be updated.")
+
+
+class AuditLogManager(models.Manager.from_queryset(AppendOnlyQuerySet)):
+    """Manager for the append-only audit tables."""
 
 
 class AuditLog(models.Model):
@@ -348,7 +358,7 @@ class AuditLog(models.Model):
         Override save to enforce append-only behavior.
         Only allows creation, not updates.
         """
-        if self.pk and AuditLog.objects.filter(pk=self.pk).exists():
+        if not self._state.adding:
             raise PermissionError("Audit logs are immutable and cannot be updated.")
         super().save(*args, **kwargs)
     
@@ -417,7 +427,11 @@ class AuditLog(models.Model):
             user_agent = request.META.get('HTTP_USER_AGENT', '')[:500]
             request_method = request.method
             request_path = request.path[:500]
-            device_fingerprint_hash = request.META.get('HTTP_X_DEVICE_FINGERPRINT', '')
+            # The raw fingerprint is a login credential for JanMitra users,
+            # so only its digest may ever be written to the audit trail.
+            device_fingerprint_hash = hash_device_fingerprint(
+                request.META.get('HTTP_X_DEVICE_FINGERPRINT', '')
+            )
         
         return cls.objects.create(
             event_type=event_type,
@@ -439,11 +453,8 @@ class AuditLog(models.Model):
     
     @staticmethod
     def _get_client_ip(request):
-        """Extract client IP from request, handling proxies."""
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            return x_forwarded_for.split(',')[0].strip()
-        return request.META.get('REMOTE_ADDR')
+        """Client IP, honouring only trusted proxy hops."""
+        return get_client_ip(request)
 
 
 class IdentityRevealLog(models.Model):
@@ -518,6 +529,8 @@ class IdentityRevealLog(models.Model):
         blank=True
     )
     
+    objects = AuditLogManager()
+    
     class Meta:
         db_table = 'identity_reveal_logs'
         verbose_name = 'Identity Reveal Log'
@@ -529,7 +542,7 @@ class IdentityRevealLog(models.Model):
     
     def save(self, *args, **kwargs):
         """Enforce append-only behavior."""
-        if self.pk and IdentityRevealLog.objects.filter(pk=self.pk).exists():
+        if not self._state.adding:
             raise PermissionError("Identity reveal logs are immutable.")
         super().save(*args, **kwargs)
     

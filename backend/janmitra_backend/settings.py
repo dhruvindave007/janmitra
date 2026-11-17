@@ -41,11 +41,23 @@ SECRET_KEY = config('SECRET_KEY')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config('DEBUG', default=False, cast=bool)
 
-ALLOWED_HOSTS = ['*']  # dev only
+# Hosts this deployment answers to. Never a wildcard: a wildcard disables
+# Django's Host-header validation (password-reset poisoning, cache poisoning).
+# localhost is always allowed so the container health check keeps working.
+ALLOWED_HOSTS = sorted(
+    set(config('ALLOWED_HOSTS', default='', cast=Csv())) | {'localhost', '127.0.0.1'}
+)
 
-# Add testserver for Django test client
 if DEBUG:
-    ALLOWED_HOSTS += ['testserver', 'localhost', '127.0.0.1']
+    ALLOWED_HOSTS += ['testserver', '[::1]']
+
+# Number of reverse proxies (nginx) in front of the app. Client IPs are only
+# read from X-Forwarded-For when this is > 0 â€” see core.utils.get_client_ip.
+TRUSTED_PROXY_COUNT = config('TRUSTED_PROXY_COUNT', default=0, cast=int)
+
+if TRUSTED_PROXY_COUNT > 0:
+    # TLS is terminated at the proxy; without this SECURE_SSL_REDIRECT loops.
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 # =============================================================================
 # APPLICATION DEFINITION
@@ -235,8 +247,11 @@ REST_FRAMEWORK = {
         'django_filters.rest_framework.DjangoFilterBackend',
         'rest_framework.filters.OrderingFilter',
     ),
-    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'DEFAULT_PAGINATION_CLASS': 'core.pagination.StandardPagination',
     'PAGE_SIZE': 20,
+    # Throttle keys must use the real client address, not the proxy's and not
+    # a spoofable left-most X-Forwarded-For entry.
+    'NUM_PROXIES': TRUSTED_PROXY_COUNT or None,
     'DEFAULT_THROTTLE_CLASSES': [
         'rest_framework.throttling.AnonRateThrottle',
         'rest_framework.throttling.UserRateThrottle',
@@ -254,7 +269,9 @@ REST_FRAMEWORK = {
 # =============================================================================
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(hours=2),
+    'ACCESS_TOKEN_LIFETIME': timedelta(
+        minutes=config('JWT_ACCESS_TOKEN_LIFETIME_MINUTES', default=120, cast=int)
+    ),
     'REFRESH_TOKEN_LIFETIME': timedelta(
         days=config('JWT_REFRESH_TOKEN_LIFETIME_DAYS', default=7, cast=int)
     ),
@@ -284,7 +301,8 @@ if not DEBUG:
     SECURE_SSL_REDIRECT = config('SECURE_SSL_REDIRECT', default=True, cast=bool)
     SESSION_COOKIE_SECURE = config('SESSION_COOKIE_SECURE', default=True, cast=bool)
     CSRF_COOKIE_SECURE = config('CSRF_COOKIE_SECURE', default=True, cast=bool)
-    SECURE_BROWSER_XSS_FILTER = True
+    # Health checks are plain HTTP from inside the container network.
+    SECURE_REDIRECT_EXEMPT = [r'^health/$', r'^api/health/$']
     SECURE_CONTENT_TYPE_NOSNIFF = True
     X_FRAME_OPTIONS = 'DENY'
     SECURE_HSTS_SECONDS = 31536000  # 1 year
@@ -311,6 +329,39 @@ CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 30 * 60  # 30 minutes
+
+# Periodic jobs (run by `celery -A janmitra_backend worker -B`).
+SLA_ESCALATION_INTERVAL_MINUTES = config(
+    'SLA_ESCALATION_INTERVAL_MINUTES', default=15, cast=int
+)
+CELERY_BEAT_SCHEDULE = {
+    'escalate-sla-breaches': {
+        'task': 'reports.tasks.escalate_sla_breaches',
+        'schedule': timedelta(minutes=SLA_ESCALATION_INTERVAL_MINUTES),
+    },
+}
+
+# =============================================================================
+# CACHE (backs DRF throttling)
+# =============================================================================
+
+# With several gunicorn workers a per-process cache multiplies every rate
+# limit by the worker count, so production points this at Redis.
+CACHE_URL = config('CACHE_URL', default='')
+
+if CACHE_URL:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+            'LOCATION': CACHE_URL,
+        }
+    }
+else:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        }
+    }
 
 # =============================================================================
 # AUDIT CONFIGURATION
@@ -410,8 +461,13 @@ CORS_ALLOWED_ORIGINS = config(
     cast=Csv()
 ) if config('CORS_ALLOWED_ORIGINS', default='') else []
 
-# Allow credentials (cookies, authorization headers)
-CORS_ALLOW_CREDENTIALS = True
+# The API authenticates with a Bearer token, not cookies, so cross-origin
+# requests never need credentials. Keeping this off also means
+# CORS_ALLOW_ALL_ORIGINS cannot be combined with cookie-bearing requests.
+CORS_ALLOW_CREDENTIALS = config('CORS_ALLOW_CREDENTIALS', default=False, cast=bool)
+
+# CORS only applies to the API; the admin is same-origin.
+CORS_URLS_REGEX = r'^/api/.*$'
 
 # Allowed headers
 CORS_ALLOW_HEADERS = [
@@ -453,16 +509,20 @@ CSRF_TRUSTED_ORIGINS = config(
 # FILE UPLOAD CONFIGURATION
 # =============================================================================
 
-# Maximum upload size (500MB for video)
+# Largest non-file request body Django will parse (JSON / form fields).
+# File parts are not counted here; they are limited per media type in
+# reports.models.IncidentMediaType and by nginx's client_max_body_size.
 DATA_UPLOAD_MAX_MEMORY_SIZE = config(
     'DATA_UPLOAD_MAX_MEMORY_SIZE',
-    default=524288000,  # 500MB
+    default=10 * 1024 * 1024,  # 10MB
     cast=int
 )
 
+# Uploads above this size are streamed to a temporary file instead of being
+# held in worker memory. This is a spooling threshold, not an upload limit.
 FILE_UPLOAD_MAX_MEMORY_SIZE = config(
     'FILE_UPLOAD_MAX_MEMORY_SIZE',
-    default=524288000,  # 500MB
+    default=5 * 1024 * 1024,  # 5MB
     cast=int
 )
 

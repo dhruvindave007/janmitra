@@ -7,6 +7,7 @@ Provides:
 - Admin IP restriction (blocks by default in production)
 """
 
+from core.utils import get_client_ip
 import json
 import logging
 import time
@@ -120,11 +121,8 @@ class AuditLoggingMiddleware:
             audit_logger.info(log_line)
     
     def _get_client_ip(self, request):
-        """Extract client IP, respecting proxy headers."""
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            return x_forwarded_for.split(',')[0].strip()
-        return request.META.get('REMOTE_ADDR', 'unknown')
+        """Client IP, honouring only trusted proxy hops."""
+        return get_client_ip(request)
 
 
 class AdminIPRestrictionMiddleware:
@@ -161,7 +159,5 @@ class AdminIPRestrictionMiddleware:
         return self.get_response(request)
     
     def _get_client_ip(self, request):
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            return x_forwarded_for.split(',')[0].strip()
-        return request.META.get('REMOTE_ADDR', 'unknown')
+        """Client IP, honouring only trusted proxy hops."""
+        return get_client_ip(request)

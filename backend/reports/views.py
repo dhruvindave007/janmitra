@@ -46,7 +46,13 @@ from authentication.permissions import (
 )
 from audit.models import AuditLog, AuditEventType
 from notifications.services import NotificationService
-from .services import BroadcastIncidentService, IncidentCreationError
+from .services import (
+    BroadcastIncidentService, IncidentCreationError,
+    EscalationService, CannotEscalateError,
+)
+from .access import (
+    get_case_for_user, check_incident_access, can_download_incident_media,
+)
 
 
 class ReportCreateView(views.APIView):
@@ -623,13 +629,7 @@ class AddCaseNoteView(views.APIView):
     permission_classes = [IsLevel1OrLevel2]
     
     def post(self, request, case_id):
-        try:
-            case = Case.objects.get(id=case_id, is_deleted=False)
-        except Case.DoesNotExist:
-            return Response(
-                {'detail': 'Case not found.'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+        case = get_case_for_user(request.user, case_id)
         
         content = request.data.get('content', '').strip()
         if not content:
@@ -672,13 +672,7 @@ class SolveCaseView(views.APIView):
     permission_classes = [IsLevel1OrLevel2]
     
     def post(self, request, case_id):
-        try:
-            case = Case.objects.get(id=case_id, is_deleted=False)
-        except Case.DoesNotExist:
-            return Response(
-                {'detail': 'Case not found.'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+        case = get_case_for_user(request.user, case_id)
         
         # Allow solving from any non-terminal status
         terminal = {CaseStatus.SOLVED, CaseStatus.CLOSED, CaseStatus.REJECTED, CaseStatus.RESOLVED}
@@ -725,13 +719,7 @@ class CloseCaseView(views.APIView):
     permission_classes = [IsLevel1OrLevel2]
     
     def post(self, request, case_id):
-        try:
-            case = Case.objects.get(id=case_id, is_deleted=False)
-        except Case.DoesNotExist:
-            return Response(
-                {'detail': 'Case not found.'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+        case = get_case_for_user(request.user, case_id)
         
         # Only L2+ can close cases
         user = request.user
@@ -777,23 +765,17 @@ class CloseCaseView(views.APIView):
 
 class ForwardCaseView(views.APIView):
     """
-    Forward (escalate) a case to higher level.
+    Forward (escalate) a case to the next level: L0/L1/L2 -> L3 -> L4.
     
-    POST /api/v1/incidents/{case_id}/forward/
+    POST /api/v1/incidents/cases/{case_id}/forward/
     
-    Only Level 2 Captain can forward.
+    Any officer who can see the case may forward it. L4 is final.
     """
     
     permission_classes = [IsLevel1OrLevel2]
     
     def post(self, request, case_id):
-        try:
-            case = Case.objects.get(id=case_id, is_deleted=False)
-        except Case.DoesNotExist:
-            return Response(
-                {'detail': 'Case not found.'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+        case = get_case_for_user(request.user, case_id)
         
         # Allow forwarding from any non-terminal status
         terminal = {CaseStatus.SOLVED, CaseStatus.CLOSED, CaseStatus.REJECTED, CaseStatus.RESOLVED}
@@ -803,46 +785,29 @@ class ForwardCaseView(views.APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        if case.current_level <= CaseLevel.LEVEL_0:
+        reason = (request.data.get('reason') or '').strip()
+        
+        # Levels are strings ('L0'..'L4') since migration 0011. This view
+        # still did integer arithmetic on them (level - 1, level <= 0) and
+        # raised TypeError on every call, so it now delegates to the same
+        # service the SLA job uses: station levels -> L3 -> L4.
+        try:
+            from_level, to_level = EscalationService.escalate_case(
+                case,
+                escalated_by=request.user,
+                reason=reason,
+            )
+        except CannotEscalateError as e:
             return Response(
-                {'detail': 'Case is already at highest level.'},
+                {'detail': str(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        reason = request.data.get('reason', '')
-        
-        old_level = case.current_level
-        case.current_level = old_level - 1
-        case.escalation_count += 1
-        case.last_escalated_at = timezone.now()
-        # Reset SLA for new level
-        case.sla_deadline = timezone.now() + timedelta(hours=24)
-        case.save()
-        
-        # Status history
-        CaseStatusHistory.objects.create(
-            case=case,
-            from_status=case.status,
-            to_status=case.status,
-            from_level=old_level,
-            to_level=case.current_level,
-            changed_by=request.user,
-            reason=reason or "Forwarded to higher level"
-        )
-        
-        # Notify authorities about the escalation
-        try:
-            NotificationService.notify_case_escalated(
-                case=case,
-                from_level=old_level,
-                to_level=case.current_level,
-                escalated_by=request.user,
-                reason=reason or "Forwarded to higher level"
-            )
-        except Exception:
-            pass  # Non-critical
-        
-        return Response({'detail': f'Case forwarded to Level {case.current_level}.'})
+        return Response({
+            'detail': f'Case forwarded to {to_level}.',
+            'from_level': from_level,
+            'to_level': to_level,
+        })
 
 
 class RejectCaseView(views.APIView):
@@ -857,13 +822,7 @@ class RejectCaseView(views.APIView):
     permission_classes = [IsLevel1OrLevel2]
     
     def post(self, request, case_id):
-        try:
-            case = Case.objects.get(id=case_id, is_deleted=False)
-        except Case.DoesNotExist:
-            return Response(
-                {'detail': 'Case not found.'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+        case = get_case_for_user(request.user, case_id)
         
         # Allow rejection from any non-terminal status
         terminal = {CaseStatus.SOLVED, CaseStatus.CLOSED, CaseStatus.REJECTED, CaseStatus.RESOLVED}
@@ -967,29 +926,14 @@ class OpenCasesView(generics.ListAPIView):
     serializer_class = CaseListSerializer
     
     def get_queryset(self):
-        user = self.request.user
+        from .models import visible_cases_for_user
         
-        # JanMitra should NEVER access this endpoint
-        if user.is_janmitra:
-            return Case.objects.none()
-        
-        queryset = Case.objects.select_related('incident', 'incident__submitted_by').filter(
-            is_deleted=False,
-        ).exclude(
+        # Same scope as CaseListView. The previous implementation compared
+        # the string level column against legacy integer levels, which
+        # matched nothing for L0-L4 users and ignored police station.
+        queryset = visible_cases_for_user(self.request.user).exclude(
             status__in=[CaseStatus.SOLVED, CaseStatus.CLOSED, CaseStatus.REJECTED, CaseStatus.RESOLVED]
         )
-        
-        # STRICT role-based filtering
-        if user.is_level_2 and not user.is_level_2_captain:
-            queryset = queryset.filter(current_level=CaseLevel.LEVEL_2)
-        elif user.is_level_2_captain:
-            queryset = queryset.filter(current_level__lte=CaseLevel.LEVEL_2)
-        elif user.is_level_1:
-            queryset = queryset.filter(current_level=CaseLevel.LEVEL_1)
-        elif user.is_level_0:
-            queryset = queryset.filter(current_level=CaseLevel.LEVEL_0)
-        else:
-            return Case.objects.none()
         
         return queryset.order_by('sla_deadline')  # Most urgent first
 
@@ -1032,9 +976,8 @@ class CaseDetailView(views.APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        # Check if user has access via visible_cases_for_user
-        visible_ids = visible_cases_for_user(user).values_list('id', flat=True)
-        if case.id not in visible_ids:
+        # Single indexed EXISTS instead of loading every visible id.
+        if not visible_cases_for_user(user).filter(pk=case.pk).exists():
             raise PermissionDenied("You do not have access to this case")
         
         serializer = CaseDetailSerializer(case, context={'request': request})
@@ -1080,27 +1023,9 @@ class IncidentFeedView(generics.ListAPIView):
     serializer_class = CaseListSerializer
     
     def get_queryset(self):
-        user = self.request.user
+        from .models import visible_cases_for_user
         
-        # JanMitra should NEVER access this endpoint
-        if user.is_janmitra:
-            return Case.objects.none()
-        
-        queryset = Case.objects.select_related('incident', 'incident__submitted_by').filter(
-            is_deleted=False
-        )
-        
-        # STRICT role-based filtering
-        if user.is_level_2 and not user.is_level_2_captain:
-            queryset = queryset.filter(current_level=CaseLevel.LEVEL_2)
-        elif user.is_level_2_captain:
-            queryset = queryset.filter(current_level__lte=CaseLevel.LEVEL_2)
-        elif user.is_level_1:
-            queryset = queryset.filter(current_level=CaseLevel.LEVEL_1)
-        elif user.is_level_0:
-            queryset = queryset.filter(current_level=CaseLevel.LEVEL_0)
-        else:
-            return Case.objects.none()
+        queryset = visible_cases_for_user(self.request.user)
         
         return queryset.order_by('-created_at')[:100]  # Last 100 incidents
 
@@ -1216,12 +1141,14 @@ class IncidentMediaListView(views.APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        # Get media files
+        # The incident must belong to a case inside the caller's scope.
+        check_incident_access(request.user, incident)
+
         media_files = IncidentMedia.objects.filter(
             incident=incident,
             is_deleted=False
-        ).order_by('created_at')
-        
+        ).select_related('uploaded_by').order_by('created_at')
+
         serializer = IncidentMediaSerializer(media_files, many=True, context={'request': request})
         return Response(serializer.data)
 
@@ -1233,13 +1160,10 @@ class IncidentMediaDownloadView(views.APIView):
     GET /api/v1/incidents/media/{media_id}/download/
     
     Rules:
-    - Level-0 (Super Admin): CAN download
-    - Level-1 (Senior Authority): CAN download
-    - Level-2 Captain: CAN download
-    - Level-2 (Field Authority): CANNOT download - return 403
-    - JanMitra: NO access - return 403
-    
-    Returns file with proper content-type.
+    - L1, L2, L3, L4 (and legacy Level-0 / Level-1 / Level-2 Captain): download
+    - L0 field officers (and legacy Level-2): preview only - 403 here
+    - JanMitra: no access - 403
+    - In every case the media's case must be visible to the caller.
     """
     
     permission_classes = [IsAuthenticated]
@@ -1257,24 +1181,16 @@ class IncidentMediaDownloadView(views.APIView):
                 status=status.HTTP_403_FORBIDDEN
             )
         
-        # Level-2 officers (not captains): CANNOT download
-        if user.role == UserRole.LEVEL_2:
+        # Role gate: who may download originals at all (see reports.access).
+        if not can_download_incident_media(user):
             return Response(
                 {
-                    'detail': 'Level-2 officers cannot download media files. Preview only.',
+                    'detail': 'Your role cannot download media files. Preview only.',
                     'code': 'download_restricted'
                 },
                 status=status.HTTP_403_FORBIDDEN
             )
-        
-        # Allowed roles: LEVEL_0, LEVEL_1, LEVEL_2_CAPTAIN
-        allowed_roles = [UserRole.LEVEL_0, UserRole.LEVEL_1, UserRole.LEVEL_2_CAPTAIN]
-        if user.role not in allowed_roles:
-            return Response(
-                {'detail': 'You do not have permission to download media files.'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
+
         # Get the media file
         try:
             media = IncidentMedia.objects.select_related('incident').get(
@@ -1286,11 +1202,14 @@ class IncidentMediaDownloadView(views.APIView):
                 {'detail': 'Media not found.'},
                 status=status.HTTP_404_NOT_FOUND
             )
-        
+
+        # Object-level scope: the media's case must be visible to the caller.
+        check_incident_access(user, media.incident)
+
         # Check if file exists
         if not media.file:
             raise Http404("File not found")
-        
+
         # Audit log for media access
         AuditLog.log(
             event_type=AuditEventType.MEDIA_ACCESSED,
@@ -1307,17 +1226,15 @@ class IncidentMediaDownloadView(views.APIView):
             }
         )
         
-        # Return file response
-        response = FileResponse(
+        # FileResponse builds a correctly escaped Content-Disposition header.
+        # The filename comes from the uploader, so it must never be
+        # interpolated into the header by hand.
+        return FileResponse(
             media.file.open('rb'),
-            content_type=media.content_type or 'application/octet-stream'
+            as_attachment=True,
+            filename=media.original_filename or f"media_{media_id}",
+            content_type=media.content_type or 'application/octet-stream',
         )
-        
-        # Set filename for download
-        filename = media.original_filename or f"media_{media_id}"
-        response['Content-Disposition'] = f'attachment; filename="{filename}"'
-        
-        return response
 
 
 class IncidentMediaPreviewView(views.APIView):
@@ -1371,11 +1288,14 @@ class IncidentMediaPreviewView(views.APIView):
                 {'detail': 'Media not found.'},
                 status=status.HTTP_404_NOT_FOUND
             )
-        
+
+        # Object-level scope: the media's case must be visible to the caller.
+        check_incident_access(user, media.incident)
+
         # Check if file exists
         if not media.file:
             raise Http404("File not found")
-        
+
         # Audit log for preview access
         AuditLog.log(
             event_type=AuditEventType.MEDIA_ACCESSED,
@@ -1884,12 +1804,12 @@ class MessageMediaDownloadView(views.APIView):
         
         # Return file
         try:
-            response = FileResponse(
+            return FileResponse(
                 message.file.open('rb'),
-                content_type=message.file_type or 'application/octet-stream'
+                as_attachment=True,
+                filename=message.file_name or 'file',
+                content_type=message.file_type or 'application/octet-stream',
             )
-            response['Content-Disposition'] = f'attachment; filename="{message.file_name or "file"}"'
-            return response
         except FileNotFoundError:
             return Response(
                 {'error': 'File not found on server'},

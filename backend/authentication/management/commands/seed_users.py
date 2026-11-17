@@ -1,56 +1,46 @@
 """
-Management command to seed demo/test users for JanMitra.
+Management command to seed demo users, one per role.
 
 Usage:
-    python manage.py seed_users          # create if not exists
-    python manage.py seed_users --force  # reset passwords & roles
+    python manage.py seed_users                       # create if missing
+    python manage.py seed_users --force               # reset passwords & roles
+    python manage.py seed_users --password 'S3cret!'  # explicit password
 
-Role hierarchy (correct canonical roles):
-    L0  = Field Officer (station)      — works assigned cases
-    L1  = PSO (station)                — assigns L0, manages station
-    L2  = PI / Station Head (station)  — closes solved cases
-    L3  = Regional authority           — handles escalated cases
-    L4  = Zonal authority              — final escalation, no SLA
-    JANMITRA = Citizen                 — submits incidents
+Role hierarchy:
+    L0  = Field Officer (station)      - works assigned cases
+    L1  = PSO (station)                - assigns L0, manages station
+    L2  = PI / Station Head (station)  - closes solved cases
+    L3  = Regional authority           - handles escalated cases
+    L4  = Zonal authority              - final escalation, no SLA
+    JANMITRA = Citizen                 - submits incidents
 
-All passwords: Test@1234
+Password selection, in order:
+    1. --password
+    2. the SEED_USER_PASSWORD environment variable
+    3. DEV_DEFAULT_PASSWORD, only when DEBUG=True
+
+With DEBUG=False and no explicit password the command refuses to run, so a
+production deploy can never end up with well-known credentials on an L4
+account.
 """
 
-from django.core.management.base import BaseCommand
+import os
+
+from django.conf import settings
+from django.core.management.base import BaseCommand, CommandError
+
 from authentication.models import User, UserRole, UserStatus
 
+# Local development only. Never used when DEBUG is False.
+DEV_DEFAULT_PASSWORD = 'Test@1234'
 
 DEMO_USERS = [
-    {
-        'identifier': 'janmitra_user',
-        'password': 'Test@1234',
-        'role': UserRole.JANMITRA,
-    },
-    {
-        'identifier': 'l0_officer',
-        'password': 'Test@1234',
-        'role': UserRole.L0,
-    },
-    {
-        'identifier': 'l1_pso',
-        'password': 'Test@1234',
-        'role': UserRole.L1,
-    },
-    {
-        'identifier': 'l2_pi',
-        'password': 'Test@1234',
-        'role': UserRole.L2,
-    },
-    {
-        'identifier': 'l3_regional',
-        'password': 'Test@1234',
-        'role': UserRole.L3,
-    },
-    {
-        'identifier': 'l4_zonal',
-        'password': 'Test@1234',
-        'role': UserRole.L4,
-    },
+    {'identifier': 'janmitra_user', 'role': UserRole.JANMITRA},
+    {'identifier': 'l0_officer', 'role': UserRole.L0},
+    {'identifier': 'l1_pso', 'role': UserRole.L1},
+    {'identifier': 'l2_pi', 'role': UserRole.L2},
+    {'identifier': 'l3_regional', 'role': UserRole.L3},
+    {'identifier': 'l4_zonal', 'role': UserRole.L4},
 ]
 
 
@@ -63,15 +53,30 @@ class Command(BaseCommand):
             action='store_true',
             help='Reset passwords and roles even if users already exist',
         )
+        parser.add_argument(
+            '--password',
+            help='Password for every seeded user (overrides SEED_USER_PASSWORD)',
+        )
+
+    def _resolve_password(self, options):
+        password = options.get('password') or os.environ.get('SEED_USER_PASSWORD')
+        if password:
+            return password
+        if settings.DEBUG:
+            return DEV_DEFAULT_PASSWORD
+        raise CommandError(
+            'Refusing to seed users with the development default password while '
+            'DEBUG=False. Pass --password or set SEED_USER_PASSWORD.'
+        )
 
     def handle(self, *args, **options):
         force = options['force']
+        password = self._resolve_password(options)
         created_count = 0
         updated_count = 0
 
         for user_data in DEMO_USERS:
             identifier = user_data['identifier']
-            password = user_data['password']
             role = user_data['role']
 
             try:

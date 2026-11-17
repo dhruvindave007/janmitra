@@ -10,6 +10,7 @@ Provides REST API endpoints for:
 All media is encrypted client-side before upload.
 """
 
+from core.utils import get_client_ip
 import hashlib
 import base64
 from django.http import FileResponse
@@ -301,10 +302,8 @@ class MediaDetailView(views.APIView):
         })
     
     def _get_ip(self, request):
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            return x_forwarded_for.split(',')[0].strip()
-        return request.META.get('REMOTE_ADDR')
+        """Client IP, honouring only trusted proxy hops."""
+        return get_client_ip(request)
 
 
 class MediaDownloadView(views.APIView):
@@ -390,7 +389,5 @@ class MediaDownloadView(views.APIView):
         return response
     
     def _get_ip(self, request):
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            return x_forwarded_for.split(',')[0].strip()
-        return request.META.get('REMOTE_ADDR')
+        """Client IP, honouring only trusted proxy hops."""
+        return get_client_ip(request)

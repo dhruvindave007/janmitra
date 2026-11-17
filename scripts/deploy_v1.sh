@@ -78,6 +78,7 @@ if [ ! -f "$DEPLOY_DIR/.env" ]; then
     JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_urlsafe(50))" 2>/dev/null || openssl rand -base64 50)
     MASTER_KEY=$(python3 -c "import base64,secrets; print(base64.b64encode(secrets.token_bytes(32)).decode())" 2>/dev/null || openssl rand -base64 32)
     DB_PASS=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))" 2>/dev/null || openssl rand -base64 24)
+    SEED_PASS=$(python3 -c "import secrets; print(secrets.token_urlsafe(18))" 2>/dev/null || openssl rand -base64 18)
 
     cat > "$DEPLOY_DIR/.env" <<ENVFILE
 # JANMITRA PRODUCTION - Auto-generated $(date)
@@ -104,6 +105,13 @@ MASTER_ENCRYPTION_KEY=${MASTER_KEY}
 # Redis
 REDIS_URL=redis://redis:6379/0
 CELERY_BROKER_URL=redis://redis:6379/1
+CACHE_URL=redis://redis:6379/2
+
+# One reverse proxy (nginx) sits in front of Django
+TRUSTED_PROXY_COUNT=1
+
+# Password for the demo accounts created by 'manage.py seed_users'
+SEED_USER_PASSWORD=${SEED_PASS}
 
 # Security (HTTP-only, no SSL)
 SECURE_SSL_REDIRECT=False
@@ -114,9 +122,9 @@ CSRF_TRUSTED_ORIGINS=http://${SERVER_IP},http://localhost
 # CORS
 CORS_ALLOW_ALL_ORIGINS=True
 
-# Upload
-DATA_UPLOAD_MAX_MEMORY_SIZE=524288000
-FILE_UPLOAD_MAX_MEMORY_SIZE=524288000
+# Upload (non-file body limit / in-memory spooling threshold)
+DATA_UPLOAD_MAX_MEMORY_SIZE=10485760
+FILE_UPLOAD_MAX_MEMORY_SIZE=5242880
 
 # Gunicorn
 GUNICORN_WORKERS=4
@@ -172,8 +180,13 @@ echo -e "${GREEN}Web app publish step completed${NC}"
 
 # Step 13: Seed users
 echo -e "\n${YELLOW}[13/13] Seed Demo Users${NC}"
-docker-compose exec -T django python manage.py seed_users --force 2>/dev/null || echo "seed_users not available, creating superuser..."
-echo -e "${GREEN}Users ready${NC}"
+# Uses SEED_USER_PASSWORD from .env; the command refuses to fall back to a
+# well-known default when DEBUG=False.
+if docker-compose exec -T django python manage.py seed_users --force; then
+    echo -e "${GREEN}Demo users ready (password: SEED_USER_PASSWORD in $DEPLOY_DIR/.env)${NC}"
+else
+    echo -e "${RED}seed_users failed â€” set SEED_USER_PASSWORD in .env and re-run it${NC}"
+fi
 
 # Health check
 echo -e "\n${YELLOW}Running Health Checks...${NC}"

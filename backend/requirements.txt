@@ -1,61 +1,42 @@
 # =============================================================================
 # JANMITRA BACKEND - PYTHON DEPENDENCIES
-# Production-grade requirements for Django REST API
+# =============================================================================
+# Direct dependencies only, pinned to exact versions for reproducible builds.
+# Python 3.12. To upgrade: bump a pin, run the test suite, commit both.
 # =============================================================================
 
-# Django Framework
-Django>=4.2,<5.0
+# Web framework (5.2 is the current LTS line)
+Django==5.2.19
+djangorestframework==3.18.3
+django-filter==26.2
+django-cors-headers==4.9.0
 
-# Django REST Framework
-djangorestframework>=3.14,<4.0
-django-filter>=23.5
+# JWT authentication (with refresh-token blacklist)
+djangorestframework-simplejwt==5.5.1
 
-# JWT Authentication
-djangorestframework-simplejwt>=5.3,<6.0
+# PostgreSQL driver
+psycopg2-binary==2.9.13
 
-# Database
-psycopg2-binary>=2.9,<3.0  # PostgreSQL adapter
+# Settings from environment / .env
+python-decouple==3.8
 
-# Environment Configuration
-python-decouple>=3.8
+# WSGI server
+gunicorn==27.0.1
 
-# WSGI Server
-gunicorn>=21.0,<23.0
+# Background jobs: SLA auto-escalation (worker + beat), Redis broker/cache
+celery==5.7.0
+redis==8.1.0
 
-# Celery Task Queue
-celery>=5.3,<6.0
-redis>=5.0,<6.0
+# Image previews for incident media
+pillow==13.0.0
 
-# CORS Headers (for mobile app)
-django-cors-headers>=4.3,<5.0
+# Error tracking (only active when SENTRY_DSN is set)
+sentry-sdk[django,celery]==2.75.0
 
-# Encryption
-cryptography>=41.0,<43.0
-pycryptodome>=3.19,<4.0
-
-# Image Processing (for media handling)
-Pillow>=10.0,<11.0
-
-# File Type Detection
-python-magic>=0.4.27
-
-# UUID handling
-uuid>=1.30
-
-# HTTP Requests (for external APIs)
-requests>=2.31,<3.0
-
-# Timezone support
-pytz>=2024.1
-
-# Password hashing
-argon2-cffi>=23.1
-
-# Whitenoise for static files (optional, nginx handles this)
-whitenoise>=6.6,<7.0
-
-# Health checks
-django-health-check>=3.17,<4.0
-
-# Error tracking & monitoring
-sentry-sdk[django,celery]>=2.0,<3.0
+# -----------------------------------------------------------------------------
+# Optional, not installed by default:
+#   firebase-admin   push notifications (notifications/services.py imports it
+#                    lazily and disables push when it or its key is missing)
+#   opencv-python-headless   first-frame video previews (reports/views.py
+#                    falls back to streaming the first chunk without it)
+# -----------------------------------------------------------------------------

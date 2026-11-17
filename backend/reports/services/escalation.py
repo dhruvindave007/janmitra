@@ -149,14 +149,8 @@ class EscalationService:
                     # Log but continue with other cases
                     pass
         
-        # Send notifications outside transaction
-        for case, from_level, to_level in escalated:
-            try:
-                from notifications.services import NotificationService
-                NotificationService.notify_case_escalated(case, from_level, to_level)
-            except Exception:
-                pass  # Don't fail escalation if notification fails
-        
+        # escalate_case() already notifies the receiving level; notifying
+        # again here produced a duplicate notification per escalation.
         return escalated
     
     @classmethod
@@ -201,10 +195,14 @@ class EscalationService:
             now = timezone.now()
             old_status = locked_case.status
             
-            # Mark SLA breach if this is first breach
-            if locked_case.sla_breached_at is None:
+            # Record the first SLA breach. A manual forward before the
+            # deadline is not a breach and must not be recorded as one.
+            sla_expired = bool(locked_case.sla_deadline and now > locked_case.sla_deadline)
+            if locked_case.sla_breached_at is None and (
+                escalation_type == EscalationType.AUTO or sla_expired
+            ):
                 locked_case.sla_breached_at = now
-            
+
             # Update case level and status
             locked_case.current_level = to_level
             locked_case.status = CaseStatus.ESCALATED

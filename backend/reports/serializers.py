@@ -136,21 +136,24 @@ class CaseListSerializer(serializers.ModelSerializer):
             return False
         return timezone.now() > obj.sla_deadline
     
-    def get_has_media(self, obj):
-        """Always safely return if incident has any media attachments (IncidentMedia)."""
-        from .models import IncidentMedia
-        try:
-            return IncidentMedia.objects.filter(incident_id=obj.incident_id, is_deleted=False).exists()
-        except Exception:
-            return False
-
     def get_media_count(self, obj):
-        """Always safely return count of media attachments for the incident (IncidentMedia)."""
+        """
+        Number of media attachments on the incident.
+
+        List querysets annotate ``media_count`` (see
+        ``visible_cases_for_user``) so a page of cases costs one query, not
+        two extra queries per row. The fallback covers ad-hoc instances.
+        """
+        annotated = getattr(obj, 'media_count', None)
+        if annotated is not None:
+            return annotated
         from .models import IncidentMedia
-        try:
-            return IncidentMedia.objects.filter(incident_id=obj.incident_id, is_deleted=False).count()
-        except Exception:
-            return 0
+        return IncidentMedia.objects.filter(
+            incident_id=obj.incident_id, is_deleted=False
+        ).count()
+
+    def get_has_media(self, obj):
+        return self.get_media_count(obj) > 0
 
 
 class CaseDetailSerializer(serializers.ModelSerializer):
@@ -270,37 +273,12 @@ class CaseDetailSerializer(serializers.ModelSerializer):
         ).count()
     
     def get_can_download_media(self, obj):
-        """
-        Check if current user can download media files.
-        
-        Rules:
-        - Level-0 (Super Admin): CAN download
-        - Level-1 (Senior Authority): CAN download
-        - Level-2 Captain: CAN download
-        - Level-2 (Field Authority): CANNOT download
-        - JanMitra: NO access
-        """
-        from authentication.models import UserRole
-        
+        """Whether the current user's role may download original media."""
+        from .access import can_download_incident_media
+
         request = self.context.get('request')
-        if not request or not request.user.is_authenticated:
-            return False
-        
-        user = request.user
-        
-        # JanMitra: NO access
-        if user.is_janmitra:
-            return False
-        
-        # Allowed roles for download
-        allowed_roles = [
-            UserRole.LEVEL_0,
-            UserRole.LEVEL_1,
-            UserRole.LEVEL_2_CAPTAIN,
-        ]
-        
-        return user.role in allowed_roles
-    
+        return bool(request) and can_download_incident_media(request.user)
+
     def get_media_files(self, obj):
         """
         Get list of media files for the incident with role-based access flags.
@@ -311,21 +289,9 @@ class CaseDetailSerializer(serializers.ModelSerializer):
         - download_url: URL for full download (only if can_download)
         """
         from .models import IncidentMedia
-        from authentication.models import UserRole
-        
-        request = self.context.get('request')
-        can_download = False
-        
-        if request and request.user.is_authenticated:
-            user = request.user
-            if not user.is_janmitra:
-                allowed_roles = [
-                    UserRole.LEVEL_0,
-                    UserRole.LEVEL_1,
-                    UserRole.LEVEL_2_CAPTAIN,
-                ]
-                can_download = user.role in allowed_roles
-        
+
+        can_download = self.get_can_download_media(obj)
+
         media_files = IncidentMedia.objects.filter(
             incident_id=obj.incident_id,
             is_deleted=False
@@ -847,19 +813,11 @@ class IncidentMediaSerializer(serializers.ModelSerializer):
         return None
 
     def get_can_download(self, obj):
-        """Check if current user's role allows full media download."""
-        from authentication.models import UserRole
+        """Whether the current user's role may download original media."""
+        from .access import can_download_incident_media
+
         request = self.context.get('request')
-        if not request or not request.user or not request.user.is_authenticated:
-            return False
-        user = request.user
-        # Level-2 officers (not captains) cannot download
-        if user.role == UserRole.LEVEL_2:
-            return False
-        # JanMitra cannot download
-        if getattr(user, 'is_janmitra', False):
-            return False
-        return True
+        return bool(request) and can_download_incident_media(request.user)
 
     def get_preview_url(self, obj):
         """Return the preview endpoint URL."""

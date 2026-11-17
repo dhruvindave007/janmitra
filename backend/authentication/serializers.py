@@ -14,8 +14,10 @@ Security features:
 - Audit logging
 """
 
+from core.utils import get_client_ip
 import hashlib
 from django.contrib.auth import authenticate
+from django.db import transaction
 from django.utils import timezone
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -173,12 +175,8 @@ class AuthorityLoginSerializer(serializers.Serializer):
         }
     
     def _get_ip(self, request):
-        if not request:
-            return None
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            return x_forwarded_for.split(',')[0].strip()
-        return request.META.get('REMOTE_ADDR')
+        """Client IP, honouring only trusted proxy hops."""
+        return get_client_ip(request)
 
 
 class JanMitraRegistrationSerializer(serializers.Serializer):
@@ -245,17 +243,27 @@ class JanMitraRegistrationSerializer(serializers.Serializer):
         device_info = validated_data.get('device_info', {})
         request = self.context.get('request')
         
-        # Hash the device fingerprint
-        fingerprint_hash = hashlib.sha256(device_fingerprint.encode()).hexdigest()
+        # Only the digest is stored. Login looks the profile up by this same
+        # digest, so storing the raw value here made every later device
+        # login fail with "No JanMitra account found for this device".
+        fingerprint_hash = DeviceSession.hash_fingerprint(device_fingerprint)
         
-        # Create user
-        user = User.objects.create_janmitra(
-            device_fingerprint=device_fingerprint,
-            invite_code_id=invite.id
-        )
-        
-        # Mark invite as used
-        invite.use(user)
+        with transaction.atomic():
+            # Lock the invite row so two concurrent registrations cannot
+            # both consume the last remaining use of the same code.
+            invite = InviteCode.objects.select_for_update().get(pk=invite.pk)
+            if not invite.is_valid:
+                raise serializers.ValidationError({
+                    'invite_code': ['This invite code is no longer valid.']
+                })
+            
+            user = User.objects.create_janmitra(
+                device_fingerprint=fingerprint_hash,
+                invite_code_id=invite.id
+            )
+            
+            # Mark invite as used
+            invite.use(user)
         
         # Create device session
         ip_address = self._get_ip(request) if request else None
@@ -310,12 +318,8 @@ class JanMitraRegistrationSerializer(serializers.Serializer):
         }
     
     def _get_ip(self, request):
-        if not request:
-            return None
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            return x_forwarded_for.split(',')[0].strip()
-        return request.META.get('REMOTE_ADDR')
+        """Client IP, honouring only trusted proxy hops."""
+        return get_client_ip(request)
 
 
 class JanMitraLoginSerializer(serializers.Serializer):
@@ -336,15 +340,26 @@ class JanMitraLoginSerializer(serializers.Serializer):
         """Find the JanMitra account for this device."""
         fingerprint_hash = hashlib.sha256(value.encode()).hexdigest()
         
-        try:
-            profile = JanMitraProfile.objects.select_related('user').get(
+        # A device can legitimately have several profiles over time (it may
+        # re-register after an earlier account was revoked), so prefer the
+        # usable account and fall back to the newest one for the error text.
+        profiles = list(
+            JanMitraProfile.objects.select_related('user').filter(
                 device_fingerprint_hash=fingerprint_hash
-            )
-        except JanMitraProfile.DoesNotExist:
+            ).order_by('-created_at')
+        )
+        if not profiles:
             raise serializers.ValidationError(
                 "No JanMitra account found for this device."
             )
         
+        profile = next(
+            (
+                p for p in profiles
+                if p.user.is_active and p.user.status == UserStatus.ACTIVE
+            ),
+            profiles[0],
+        )
         user = profile.user
         
         # Check user status
@@ -414,12 +429,8 @@ class JanMitraLoginSerializer(serializers.Serializer):
         }
     
     def _get_ip(self, request):
-        if not request:
-            return None
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            return x_forwarded_for.split(',')[0].strip()
-        return request.META.get('REMOTE_ADDR')
+        """Client IP, honouring only trusted proxy hops."""
+        return get_client_ip(request)
 
 
 class DeviceBoundTokenRefreshSerializer(TokenRefreshSerializer):
@@ -589,6 +600,13 @@ class LogoutSerializer(serializers.Serializer):
         
         refresh = self.validated_data['refresh']
         token = RefreshToken(refresh)
+        
+        # A caller may only end their own session, never someone else's.
+        request = self.context.get('request')
+        if request is not None and str(token.payload.get('user_id')) != str(request.user.id):
+            raise serializers.ValidationError({
+                'refresh': ['This refresh token does not belong to you.']
+            })
         
         # Blacklist the token
         token.blacklist()

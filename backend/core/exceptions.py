@@ -6,6 +6,7 @@ Never exposes sensitive information in error responses.
 Integrates with Sentry for error tracking when configured.
 """
 
+from core.utils import get_client_ip
 import logging
 
 import sentry_sdk
@@ -151,21 +152,8 @@ def _log_security_event(exc, request, view, status_code):
 
 
 def _get_client_ip(request):
-    """
-    Extract client IP address from request.
-    Handles proxy headers (X-Forwarded-For).
-    """
-    if not request:
-        return 'unknown'
-    
-    x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-    if x_forwarded_for:
-        # Take the first IP in the chain (original client)
-        ip = x_forwarded_for.split(',')[0].strip()
-    else:
-        ip = request.META.get('REMOTE_ADDR', 'unknown')
-    
-    return ip
+    """Client IP, honouring only trusted proxy hops."""
+    return get_client_ip(request)
 
 
 class JanMitraAPIException(Exception):

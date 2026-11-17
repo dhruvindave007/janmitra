@@ -14,6 +14,7 @@ Security features:
 - Comprehensive audit logging
 """
 
+from core.utils import get_client_ip
 import logging
 from django.utils import timezone
 from rest_framework import exceptions
@@ -126,12 +127,11 @@ class DeviceBoundJWTAuthentication(JWTAuthentication):
             })
         
         # Find active session for this user
-        try:
-            active_session = DeviceSession.objects.get(
-                user=user,
-                is_active=True
-            )
-        except DeviceSession.DoesNotExist:
+        active_session = DeviceSession.objects.filter(
+            user=user,
+            is_active=True
+        ).order_by('-created_at').first()
+        if active_session is None:
             security_logger.warning(
                 f"No active session for user: {user.id}"
             )
@@ -175,11 +175,8 @@ class DeviceBoundJWTAuthentication(JWTAuthentication):
             )
     
     def _get_ip(self, request):
-        """Extract client IP from request."""
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            return x_forwarded_for.split(',')[0].strip()
-        return request.META.get('REMOTE_ADDR', 'unknown')
+        """Client IP, honouring only trusted proxy hops."""
+        return get_client_ip(request)
 
 
 class JanMitraTokenObtainMixin:

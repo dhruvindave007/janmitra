@@ -16,7 +16,7 @@ from rest_framework import status, generics, views
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from rest_framework_simplejwt.views import TokenRefreshView
-from rest_framework.throttling import ScopedRateThrottle
+from rest_framework.throttling import AnonRateThrottle
 
 from .models import User, UserStatus, InviteCode, DeviceSession
 from .serializers import (
@@ -40,8 +40,15 @@ from .permissions import (
 from audit.models import AuditLog, AuditEventType
 
 
-class LoginThrottle(ScopedRateThrottle):
-    """Rate limiting for login endpoints."""
+class LoginThrottle(AnonRateThrottle):
+    """
+    Per-client-IP rate limit for the unauthenticated auth endpoints.
+    
+    This was a ScopedRateThrottle, which only throttles views that declare
+    ``throttle_scope``. None of the login views did, so the 'login' rate in
+    settings was never applied. AnonRateThrottle reads ``scope`` from the
+    throttle itself and keys on the client IP.
+    """
     scope = 'login'
 
 
