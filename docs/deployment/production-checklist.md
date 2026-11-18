@@ -81,7 +81,7 @@ curl -X POST http://<SERVER_IP>/api/v1/auth/login/ \
   -H "Content-Type: application/json" \
   -d '{
     "identifier": "janmitra_demo",
-    "password": "<DEMO_PASSWORD>",
+    "password": "<set-a-strong-password>",
     "device_id": "test-device-001"
   }'
 ```
@@ -105,7 +105,7 @@ curl -X POST http://<SERVER_IP>/api/v1/auth/login/ \
   -H "Content-Type: application/json" \
   -d '{
     "identifier": "level2@janmitra.gov.in",
-    "password": "<DEMO_PASSWORD>",
+    "password": "<set-a-strong-password>",
     "device_id": "test-device-002"
   }'
 ```
@@ -175,13 +175,13 @@ flutter run -d <device_id>
 
 #### Scenario 1: JanMitra Member Login
 1. Launch app → Login screen
-2. Enter: `janmitra_demo` / `<DEMO_PASSWORD>`
+2. Enter: `janmitra_demo` / `<set-a-strong-password>`
 3. Tap "Login"
 4. **Expected:** Home screen appears, shows "JanMitra Member"
 
 #### Scenario 2: Authority Login (Level 2)
 1. Logout (if already logged in)
-2. Login with: `level2@janmitra.gov.in` / `<DEMO_PASSWORD>`
+2. Login with: `level2@janmitra.gov.in` / `<set-a-strong-password>`
 3. Tap "Login"
 4. **Expected:** Home screen appears, shows "Authority (Level 2)"
 
@@ -211,8 +211,8 @@ flutter run -d <device_id>
 ### Demo Users Created
 | Identifier | Password | Role | Can Submit | Can Review | Can Escalate |
 |------------|----------|------|-----------|-----------|------------|
-| janmitra_demo | <DEMO_PASSWORD> | JanMitra (L3) | ✅ | ❌ | ❌ |
-| level2@janmitra.gov.in | <DEMO_PASSWORD> | Field Officer (L2) | ❌ | ✅ | ✅ |
+| janmitra_demo | <set-a-strong-password> | JanMitra (L3) | ✅ | ❌ | ❌ |
+| level2@janmitra.gov.in | <set-a-strong-password> | Field Officer (L2) | ❌ | ✅ | ✅ |
 | captain@janmitra.gov.in | Captain@123 | L2 Captain | ❌ | ✅ | ✅ |
 | level1@janmitra.gov.in | Level1@123 | Senior Authority (L1) | ❌ | ✅ | ✅ |
 | level0@janmitra.gov.in | Level0@123 | Super Admin (L0) | ❌ | ✅ | ✅ |

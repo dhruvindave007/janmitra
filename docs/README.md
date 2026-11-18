@@ -11,4 +11,4 @@
 | [`internal/`](internal) | Working notes from development (automation setup, correction logs). Historical; not maintained |
 
 Server addresses and demo passwords have been replaced with placeholders
-(`<SERVER_IP>`, `<DEMO_PASSWORD>`) in these documents.
+(`<SERVER_IP>`, `<set-a-strong-password>`) in these documents.

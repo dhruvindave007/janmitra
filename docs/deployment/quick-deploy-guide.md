@@ -54,7 +54,7 @@ docker compose exec django python manage.py seed_users --force
 # Test login
 curl -X POST http://<SERVER_IP>/api/v1/auth/login/ \
   -H "Content-Type: application/json" \
-  -d '{"identifier":"janmitra_demo","password":"<DEMO_PASSWORD>","device_id":"test"}'
+  -d '{"identifier":"janmitra_demo","password":"<set-a-strong-password>","device_id":"test"}'
 
 # Should return 200 with access + refresh tokens
 ```
@@ -77,8 +77,8 @@ curl -X POST http://<SERVER_IP>/api/v1/auth/login/ \
 
 | User | Password | Role | API URL |
 |------|----------|------|---------|
-| janmitra_demo | <DEMO_PASSWORD> | JanMitra Member | POST /api/v1/auth/login/ |
-| level2@janmitra.gov.in | <DEMO_PASSWORD> | Field Officer | POST /api/v1/auth/login/ |
+| janmitra_demo | <set-a-strong-password> | JanMitra Member | POST /api/v1/auth/login/ |
+| level2@janmitra.gov.in | <set-a-strong-password> | Field Officer | POST /api/v1/auth/login/ |
 | captain@janmitra.gov.in | Captain@123 | L2 Captain | POST /api/v1/auth/login/ |
 | level1@janmitra.gov.in | Level1@123 | Senior Authority | POST /api/v1/auth/login/ |
 | level0@janmitra.gov.in | Level0@123 | Super Admin | POST /api/v1/auth/login/ |
@@ -105,7 +105,7 @@ curl -X POST http://<SERVER_IP>/api/v1/auth/login/ \
    ```bash
    curl -X POST http://<SERVER_IP>/api/v1/auth/login/ \
      -H "Content-Type: application/json" \
-     -d '{"identifier":"janmitra_demo","password":"<DEMO_PASSWORD>","device_id":"test"}'
+     -d '{"identifier":"janmitra_demo","password":"<set-a-strong-password>","device_id":"test"}'
    ```
 
 4. **Check logs for errors**:
